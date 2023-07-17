@@ -1,4 +1,5 @@
 import sys
+
 sys.path.append('../code/lib')
 sys.path.append('../code')
 import torch
@@ -71,9 +72,9 @@ def vis_pts_att(pts, label_map, fn="temp.png", marker=".", alpha=0.9):
     TH = 0.7
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_zlim(-TH,TH)
-    ax.set_xlim(-TH,TH)
-    ax.set_ylim(-TH,TH)
+    ax.set_zlim(-TH, TH)
+    ax.set_xlim(-TH, TH)
+    ax.set_ylim(-TH, TH)
     xs = pts[:, 0]
     ys = pts[:, 1]
     zs = pts[:, 2]
@@ -89,7 +90,7 @@ def vis_pts_att(pts, label_map, fn="temp.png", marker=".", alpha=0.9):
         fn,
         bbox_inches='tight',
         pad_inches=0,
-        dpi=300,)
+        dpi=300, )
     plt.close()
 
 
@@ -191,6 +192,15 @@ for instance_id in instance_ids:
     input_x = x * 2.5
     # print('input_x: ', input_x.shape)
     labels, feats = capsule_decompose(input_x)
+    if prev_feats is not None:
+        for idx in range(10):
+            point_id = np.random.randint(0, self.config.num_pts)
+            point_feat = feats[0, :, 0, point_id, 0]
+            prev_feats = prev_feat[0, :, 0, :, 0]
+            similarity = torch.matmul(point_feat, prev_feats) / torch.norm(point_feat) / torch.norm(prev_feats, dim=0)
+            colors = cmap(similarity.cpu().numpy())
+
+    prev_feats = feats
 
     # visualize decomposed point cloud
     vis_pts_att(input_x.cpu(), labels.cpu(), os.path.join(save_path, f'{instance_id}.png'))
