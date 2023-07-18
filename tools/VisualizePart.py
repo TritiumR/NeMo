@@ -108,10 +108,10 @@ network.model.eval()
 network.load_checkpoint()
 
 
-def capsule_decompose(pc):
+def capsule_decompose(pc, R=None, T=None):
     with torch.no_grad():
         _x = pc[None]
-        _labels, _feats = network.model.decompose_one_pc(_x)
+        _labels, _feats = network.model.decompose_one_pc(_x, R, T)
     return _labels, _feats
 
 
@@ -188,9 +188,13 @@ for instance_id in instance_ids:
     # decompose using mesh
     v = verts.cpu().numpy()
     x = torch.from_numpy(fps(v, config.num_pts)).to(device)
-    input_x = x * 2.5
+    input_x = x * 2.4
+    R_can = torch.tensor([[[0.3456,  0.5633,  0.7505],
+                         [-0.9333,  0.2898,  0.2122],
+                         [-0.0980, -0.7737,  0.6259]]]).to(device)
+    T_can = torch.tensor([[[-0.0161], [-0.0014], [-0.0346]]]).to(device)
     # print('input_x: ', input_x.shape)
-    labels, feats = capsule_decompose(input_x)
+    labels, feats = capsule_decompose(input_x, R_can, T_can)
 
     # visualize decomposed point cloud
     vis_pts_att(input_x.cpu(), labels.cpu(), os.path.join(save_path, f'{instance_id}.png'))
@@ -209,6 +213,8 @@ for instance_id in instance_ids:
     # print(colors[30000])
 
     verts_features = torch.tensor(colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
+    print('verts: ', verts.shape)
+    print('verts_features: ', verts_features.shape)
     textures = Textures(verts_features=verts_features.to(device))
 
     meshes = Meshes(

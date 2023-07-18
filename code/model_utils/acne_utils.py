@@ -49,6 +49,8 @@ class KoutLayer(nn.Module):
 
         if return_att and return_x:
             return mean, a, x
+        elif return_x:
+            return mean, x
         elif return_att:
             return mean, a
         else:
@@ -262,10 +264,14 @@ class AcneKpEncoder(nn.Module):
             a_norm = att_aligner / torch.clamp(pai, min=1e-3)
             x = x[:, :, None] # BC1N1
             mean = torch.sum(x * a_norm, dim=3) # B*C*num_group*1
-            if return_x:
-                ret = (mean, att_aligner, x)
+            if return_x and return_att:
+                ret = (mean, att, x)
+            elif return_x:
+                ret = (mean, x)
+            elif return_att:
+                ret = (mean, att)
             else:
-                ret = (mean, att_aligner)
+                ret = mean
         else:
             ret = self.layers[-1](x, return_att=return_att, return_x=return_x)
         

@@ -61,37 +61,7 @@ def fps(points, n_samples):
         # Update points_left
         points_left = np.delete(points_left, selected)
 
-    return points[sample_inds]
-
-
-def vis_pts_att(pts, label_map, fn="temp.png", marker=".", alpha=0.9):
-    # pts (n, d): numpy, d-dim point cloud
-    # label_map (n, ): numpy or None
-    # fn: filename of visualization
-    assert pts.shape[1] == 3
-    TH = 0.7
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax.set_zlim(-TH, TH)
-    ax.set_xlim(-TH, TH)
-    ax.set_ylim(-TH, TH)
-    xs = pts[:, 0]
-    ys = pts[:, 1]
-    zs = pts[:, 2]
-    if label_map is not None:
-        ax.scatter(xs, ys, zs, c=label_map, cmap="jet", marker=marker, alpha=alpha)
-    else:
-        ax.scatter(xs, ys, zs, marker=marker, alpha=alpha, edgecolor="none")
-
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.set_zticklabels([])
-    plt.savefig(
-        fn,
-        bbox_inches='tight',
-        pad_inches=0,
-        dpi=300, )
-    plt.close()
+    return points[sample_inds], sample_inds
 
 
 device = 'cuda:0'
@@ -109,10 +79,10 @@ network.model.eval()
 network.load_checkpoint()
 
 
-def capsule_decompose(pc):
+def capsule_decompose(pc, R=None, T=None):
     with torch.no_grad():
         _x = pc[None]
-        _labels, _feats = network.model.decompose_one_pc(_x)
+        _labels, _feats = network.model.decompose_one_pc(_x, R, T)
     return _labels, _feats
 
 
@@ -146,8 +116,7 @@ phong_renderer = MeshRenderer(
 annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/car'
 imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
 meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
-# points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
-save_path = '../visual/PartCap'
+save_path = '../visual/CapCorrelation'
 
 if not os.path.exists(save_path):
     os.makedirs(save_path)
@@ -174,85 +143,125 @@ for instance_id in instance_ids:
     vert_middle = verts.max(dim=0)[0] + verts.min(dim=0)[0]
     verts -= vert_middle / 2
 
-    # # decompose point cloud from ply
-    # point_fn = os.path.join(points_path, f'{instance_id}.points.ply')
-    # v, _, _, _ = pcu.load_mesh_vfnc(point_fn)
-    #
-    # v = np.array(v)
-    # idx = np.random.choice(len(v), config.num_pts, replace=False)
-    # x = torch.from_numpy(v[idx]).to(device)
-    # input_x = x
-    # labels, feats = capsule_decompose(input_x)
-
-    cmap = plt.get_cmap('jet')
+    cmap = plt.get_cmap('plasma')
 
     # decompose using mesh
     v = verts.cpu().numpy()
-    x = torch.from_numpy(fps(v, config.num_pts)).to(device)
-    input_x = x * 2.5
-    # print('input_x: ', input_x.shape)
-    labels, feats = capsule_decompose(input_x)
+    v, index = fps(v, config.num_pts)
+    x = torch.from_numpy(v).to(device)
+    input_x = x * 2.4
+    R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
+                           [-0.9333, 0.2898, 0.2122],
+                           [-0.0980, -0.7737, 0.6259]]]).to(device)
+    T_can = torch.tensor([[[-0.0161], [-0.0014], [-0.0346]]]).to(device)
+    _, feats = capsule_decompose(input_x, R_can, T_can)
+
     if prev_feats is not None:
-        for idx in range(10):
-            point_id = np.random.randint(0, self.config.num_pts)
-            point_feat = feats[0, :, 0, point_id, 0]
-            prev_feats = prev_feat[0, :, 0, :, 0]
-            similarity = torch.matmul(point_feat, prev_feats) / torch.norm(point_feat) / torch.norm(prev_feats, dim=0)
+        for point_idx in range(3):
+            point_id = np.random.randint(0, config.num_pts)
+            point_feat = prev_feats[0, :, 0, point_id, 0]
+            sim_feats = feats[0, :, 0, :, 0]
+            similarity = torch.matmul(point_feat, sim_feats) / torch.norm(point_feat) / torch.norm(sim_feats, dim=0)
+
+            if config.only_highest:
+                max_point = torch.argmax(similarity)
+                similarity = torch.zeros(config.num_pts)
+                similarity[max_point] = 1.0
+
+            # nearest neighbor
+            kdtree = KDTree(x.cpu().numpy())
+            _, nearest_idx = kdtree.query(verts.cpu().numpy(), k=1)
+            similarity = similarity[nearest_idx][:, 0]
+            similarity = (similarity - similarity.min()) / (similarity.max() - similarity.min())
+            print('sim_min: ', similarity.min(), 'sim_max: ', similarity.max())
+
             colors = cmap(similarity.cpu().numpy())
+            verts_features = torch.tensor(colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
+            textures = Textures(verts_features=verts_features.to(device))
 
+            meshes = Meshes(
+                verts=[verts.to(device)],
+                faces=[faces.to(device)],
+                textures=textures
+            )
+
+            prev_similarity = torch.zeros(config.num_pts)
+            prev_similarity[point_id] = 1.0
+
+            # nearest neighbor
+            kdtree = KDTree(prev_x.cpu().numpy())
+            _, nearest_idx = kdtree.query(prev_verts.cpu().numpy(), k=1)
+            prev_similarity = prev_similarity[nearest_idx][:, 0]
+            prev_similarity = (prev_similarity - prev_similarity.min()) / (prev_similarity.max() - prev_similarity.min())
+
+            prev_colors = cmap(prev_similarity.cpu().numpy())
+            prev_verts_features = torch.tensor(prev_colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
+            prev_textures = Textures(verts_features=prev_verts_features.to(device))
+
+            prev_meshes = Meshes(
+                verts=[prev_verts.to(device)],
+                faces=[prev_faces.to(device)],
+                textures=prev_textures
+            )
+
+            img_path = os.path.join(imgs_path, instance_id)
+            img_fns = os.listdir(img_path)
+
+            print('image number: ', len(img_fns))
+            for idx, img_fn in enumerate(img_fns):
+                img = np.array(Image.open(os.path.join(img_path, img_fn)))
+
+                count_id = img_fn[:-7]
+                anno_fn = os.path.join(annos_path, instance_id, count_id + '.npy')
+                print(anno_fn)
+                anno = np.load(anno_fn, allow_pickle=True).item()
+                distance = anno['dist']
+                elevation = np.pi / 2 - anno['phi']
+                azimuth = anno['theta'] + np.pi / 2
+                camera_rotation = anno['camera_rotation']
+
+                R, T = look_at_view_transform(distance, elevation, azimuth, device=device, degrees=False)
+                R = torch.bmm(R, rotation_theta(float(camera_rotation), device_=device))
+
+                image = phong_renderer(meshes_world=meshes.clone(), R=R, T=T)
+                image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+
+                image = np.array((image / image.max()) * 255).astype(np.uint8)
+
+                mixed_image = (image * 0.9 + img * 0.1).astype(np.uint8)
+                Image.fromarray(mixed_image).save(os.path.join(instance_path, f'curr_{point_idx}_{count_id}.jpg'))
+
+            img_path = os.path.join(imgs_path, prev_instance_id)
+            img_fns = os.listdir(img_path)
+
+            print('image number: ', len(img_fns))
+            for idx, img_fn in enumerate(img_fns):
+                img = np.array(Image.open(os.path.join(img_path, img_fn)))
+
+                count_id = img_fn[:-7]
+                anno_fn = os.path.join(annos_path, prev_instance_id, count_id + '.npy')
+                print(anno_fn)
+                anno = np.load(anno_fn, allow_pickle=True).item()
+                distance = anno['dist']
+                elevation = np.pi / 2 - anno['phi']
+                azimuth = anno['theta'] + np.pi / 2
+                camera_rotation = anno['camera_rotation']
+
+                R, T = look_at_view_transform(distance, elevation, azimuth, device=device, degrees=False)
+                R = torch.bmm(R, rotation_theta(float(camera_rotation), device_=device))
+
+                image = phong_renderer(meshes_world=prev_meshes.clone(), R=R, T=T)
+                image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+
+                image = np.array((image / image.max()) * 255).astype(np.uint8)
+
+                mixed_image = (image * 0.9 + img * 0.1).astype(np.uint8)
+                Image.fromarray(mixed_image).save(os.path.join(instance_path, f'prev_{point_idx}_{count_id}.jpg'))
+
+    prev_x = x
     prev_feats = feats
-
-    # visualize decomposed point cloud
-    vis_pts_att(input_x.cpu(), labels.cpu(), os.path.join(save_path, f'{instance_id}.png'))
-
-    # nearest neighbor
-    kdtree = KDTree(x.cpu().numpy())
-    _, nearest_idx = kdtree.query(verts.cpu().numpy(), k=1)
-    # print('nearest: ', nearest_idx.shape)
-    labels = labels[nearest_idx][:, 0]
-
-    # print('labels: ', labels.shape)
-    # print(labels[:10])
-
-    colors = cmap(labels.cpu().numpy() / config.acne_num_g)
-    # print(colors.shape)
-    # print(colors[30000])
-
-    verts_features = torch.tensor(colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
-    textures = Textures(verts_features=verts_features.to(device))
-
-    meshes = Meshes(
-        verts=[verts.to(device)],
-        faces=[faces.to(device)],
-        textures=textures
-    )
-
-    img_path = os.path.join(imgs_path, instance_id)
-    img_fns = os.listdir(img_path)
-
-    print('image number: ', len(img_fns))
-    for idx, img_fn in enumerate(img_fns):
-        img = np.array(Image.open(os.path.join(img_path, img_fn)))
-
-        count_id = img_fn[:-7]
-        anno_fn = os.path.join(annos_path, instance_id, count_id + '.npy')
-        print(anno_fn)
-        anno = np.load(anno_fn, allow_pickle=True).item()
-        distance = anno['dist']
-        elevation = np.pi / 2 - anno['phi']
-        azimuth = anno['theta'] + np.pi / 2
-        camera_rotation = anno['camera_rotation']
-
-        R, T = look_at_view_transform(distance, elevation, azimuth, device=device, degrees=False)
-        R = torch.bmm(R, rotation_theta(float(camera_rotation), device_=device))
-
-        image = phong_renderer(meshes_world=meshes.clone(), R=R, T=T)
-        image = image[0, ..., :3].detach().squeeze().cpu().numpy()
-
-        image = np.array((image / image.max()) * 255).astype(np.uint8)
-
-        mixed_image = (image * 0.6 + img * 0.4).astype(np.uint8)
-        Image.fromarray(mixed_image).save(os.path.join(instance_path, f'{idx}.jpg'))
-
+    prev_verts = verts
+    prev_faces = faces
+    prev_instance_id = instance_id
     # exit(0)
 
