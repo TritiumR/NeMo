@@ -1,7 +1,7 @@
 import sys
 
-sys.path.append('../code/lib')
-sys.path.append('../code')
+sys.path.append('../nemo/lib')
+sys.path.append('../nemo')
 import torch
 import numpy as np
 import os
@@ -62,6 +62,36 @@ def fps(points, n_samples):
         points_left = np.delete(points_left, selected)
 
     return points[sample_inds], sample_inds
+
+
+def vis_pts_att(pts, label_map, fn="temp.png", marker=".", alpha=0.9):
+    # pts (n, d): numpy, d-dim point cloud
+    # label_map (n, ): numpy or None
+    # fn: filename of visualization
+    assert pts.shape[1] == 3
+    TH = 0.7
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_zlim(-TH,TH)
+    ax.set_xlim(-TH,TH)
+    ax.set_ylim(-TH,TH)
+    xs = pts[:, 0]
+    ys = pts[:, 1]
+    zs = pts[:, 2]
+    if label_map is not None:
+        ax.scatter(xs, ys, zs, c=label_map, cmap="jet", marker=marker, alpha=alpha)
+    else:
+        ax.scatter(xs, ys, zs, marker=marker, alpha=alpha, edgecolor="none")
+
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_zticklabels([])
+    plt.savefig(
+        fn,
+        bbox_inches='tight',
+        pad_inches=0,
+        dpi=300,)
+    plt.close()
 
 
 device = 'cuda:0'
@@ -157,7 +187,7 @@ for instance_id in instance_ids:
     _, feats = capsule_decompose(input_x, R_can, T_can)
 
     if prev_feats is not None:
-        for point_idx in range(3):
+        for point_idx in range(2):
             point_id = np.random.randint(0, config.num_pts)
             point_feat = prev_feats[0, :, 0, point_id, 0]
             sim_feats = feats[0, :, 0, :, 0]
@@ -168,12 +198,14 @@ for instance_id in instance_ids:
                 similarity = torch.zeros(config.num_pts)
                 similarity[max_point] = 1.0
 
+            vis_pts_att(input_x.cpu(), similarity.cpu(), os.path.join(instance_path, f'curr_{point_idx}.png'))
+
             # nearest neighbor
             kdtree = KDTree(x.cpu().numpy())
             _, nearest_idx = kdtree.query(verts.cpu().numpy(), k=1)
             similarity = similarity[nearest_idx][:, 0]
             similarity = (similarity - similarity.min()) / (similarity.max() - similarity.min())
-            print('sim_min: ', similarity.min(), 'sim_max: ', similarity.max())
+            # print('sim_min: ', similarity.min(), 'sim_max: ', similarity.max())
 
             colors = cmap(similarity.cpu().numpy())
             verts_features = torch.tensor(colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
@@ -187,6 +219,8 @@ for instance_id in instance_ids:
 
             prev_similarity = torch.zeros(config.num_pts)
             prev_similarity[point_id] = 1.0
+
+            vis_pts_att(prev_input_x.cpu(), prev_similarity.cpu(), os.path.join(instance_path, f'prev_{point_idx}.png'))
 
             # nearest neighbor
             kdtree = KDTree(prev_x.cpu().numpy())
@@ -259,6 +293,7 @@ for instance_id in instance_ids:
                 Image.fromarray(mixed_image).save(os.path.join(instance_path, f'prev_{point_idx}_{count_id}.jpg'))
 
     prev_x = x
+    prev_input_x = input_x
     prev_feats = feats
     prev_verts = verts
     prev_faces = faces

@@ -1,6 +1,6 @@
 import sys
-sys.path.append('../code/lib')
-sys.path.append('../code')
+sys.path.append('../nemo/lib')
+sys.path.append('../nemo')
 import torch
 import numpy as np
 import os
@@ -145,7 +145,7 @@ phong_renderer = MeshRenderer(
 annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/car'
 imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
 meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
-# points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
+points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
 save_path = '../visual/PartCap'
 
 if not os.path.exists(save_path):
@@ -173,22 +173,31 @@ for instance_id in instance_ids:
     vert_middle = verts.max(dim=0)[0] + verts.min(dim=0)[0]
     verts -= vert_middle / 2
 
-    # # decompose point cloud from ply
-    # point_fn = os.path.join(points_path, f'{instance_id}.points.ply')
-    # v, _, _, _ = pcu.load_mesh_vfnc(point_fn)
-    #
-    # v = np.array(v)
-    # idx = np.random.choice(len(v), config.num_pts, replace=False)
-    # x = torch.from_numpy(v[idx]).to(device)
-    # input_x = x
-    # labels, feats = capsule_decompose(input_x)
+    # decompose point cloud from ply
+    point_fn = os.path.join(points_path, f'{instance_id}.points.ply')
+    v_ply, f_ply, _, _ = pcu.load_mesh_vfnc(point_fn)
+
+    v_ply = np.array(v_ply)
+    # vis_pts_att(v_ply, None, os.path.join(save_path, f'{instance_id}_v_ply.png'))
+    # print('len ply: ', len(v_ply))
+    # print('v_ply_max: ', v_ply.max(axis=0), 'min: ', v_ply.min(axis=0), 'mean: ', v_ply.mean(axis=0))
+    idx = np.random.choice(len(v_ply), config.num_pts, replace=False)
+    x_ply = torch.from_numpy(v_ply[idx]).to(device)
+    print('max: ', x_ply.max(dim=0)[0], 'min: ', x_ply.min(dim=0)[0], 'mean: ', x_ply.mean(dim=0))
+    # input_x = x_ply
+    # labels, feats = capsule_decompose(x_ply)
 
     cmap = plt.get_cmap('jet')
 
     # decompose using mesh
     v = verts.cpu().numpy()
+    # vis_pts_att(v, None, os.path.join(save_path, f'{instance_id}_v.png'))
+    # continue
+    # print('len mesh: ', len(v))
+    # print('v_max: ', v.max(axis=0), 'min: ', v.min(axis=0), 'mean: ', v.mean(axis=0))
     x = torch.from_numpy(fps(v, config.num_pts)).to(device)
-    input_x = x * 2.4
+    # print('max: ', x.max(dim=0)[0], 'min: ', x.min(dim=0)[0], 'mean: ', x.mean(dim=0))
+    input_x = x * 2.3
     R_can = torch.tensor([[[0.3456,  0.5633,  0.7505],
                          [-0.9333,  0.2898,  0.2122],
                          [-0.0980, -0.7737,  0.6259]]]).to(device)
