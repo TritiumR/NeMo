@@ -1,64 +1,81 @@
 # need bpy python=3.7 with "pip install bpy==2.91a0 && bpy_post_install"
 import bpy
+import os
 import bmesh
 from scipy.spatial import KDTree
 import numpy as np
 
+imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
+meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
+remesh_path = '/mnt/sde/angtian/data/ShapeNet/ReMesh/02958343'
 
-def get_mesh(obj):
-    if bpy.context.mode != 'EDIT_MESH':
-        bpy.ops.object.editmode_toggle()
+if not os.path.exists(remesh_path):
+    os.makedirs(remesh_path)
 
-    return bmesh.from_edit_mesh(obj.data)
+instance_ids = os.listdir(imgs_path)
+print('instance number: ', len(instance_ids))
 
+idx = 0
+for instance_id in instance_ids:
+    if '.' in instance_id:
+        continue
+    instance_path = os.path.join(remesh_path, f'{instance_id}')
+    if not os.path.exists(instance_path):
+        os.makedirs(instance_path)
 
-def toggle_edit_mode():
-    bpy.ops.object.editmode_toggle()
+    mesh_fn = os.path.join(meshs_path, instance_id, 'models', 'model_normalized.obj')
 
+    bpy.ops.import_scene.obj(filepath=mesh_fn, filter_glob="*.obj")
+    print('import done')
 
-obj = bpy.context.active_object
+    for scene in bpy.data.scenes:
+        scene.cycles.device = 'GPU'
+    print('using GPU done')
 
-# Grab original mesh.
-orig_mesh = get_mesh(obj)
-orig_mesh.faces.ensure_lookup_table()
-print('orig', orig_mesh)
+    # Grab original mesh.
+    orig_mesh = bpy.context.selected_objects[0]
+    print('orig', orig_mesh)
+    print('get mesh done')
 
-# Face map.
-mats = []
-vecs = np.zeros((len(orig_mesh.faces), 3))
+    bpy.context.view_layer.objects.active = orig_mesh
+    print('active done')
 
-for i in range(len(orig_mesh.faces)):
-    v = orig_mesh.faces[i].calc_center_median()
-    m = orig_mesh.faces[i].material_index
+    orig_mesh.select_set(True)
+    print('select done')
 
-    vecs[i][0] = v.x
-    vecs[i][1] = v.y
-    vecs[i][2] = v.z
+    # Apply remesh modifier.
+    bpy.ops.object.modifier_add(type='REMESH')
+    print('add remesh done')
 
-    mats.append(m)
+    # adjust the remesh settings as desired
+    remesh = orig_mesh.modifiers["Remesh"]
 
-toggle_edit_mode()
+    remesh.mode = 'SMOOTH'  # can also be 'SMOOTH' or 'SHARP'
+    remesh.octree_depth = 9  # resolution of the mesh, increase for more detail
+    remesh.sharpness = 1  # how much to preserve sharp corners, 1 is max
+    remesh.use_remove_disconnected = False
 
-# Create KDTree.
-tree = KDTree(vecs)
+    # apply the remesh modifier
+    bpy.ops.object.modifier_apply(modifier="Remesh")
 
-# Apply remesh modifier.
-bpy.ops.object.modifier_add(type='REMESH')
-obj.modifiers['Remesh'].voxel_size = 0.1
-bpy.ops.object.modifier_apply(modifier='Remesh')
+    # add decimate modifier
+    bpy.ops.object.modifier_add(type='DECIMATE')
 
-new_mesh = get_mesh(obj)
-new_mesh.faces.ensure_lookup_table()
-print('new', new_mesh)
+    # adjust decimate settings as desired
+    decimate = orig_mesh.modifiers["Decimate"]
 
-for i in range(len(new_mesh.faces)):
-    v = new_mesh.faces[i].calc_center_median()
+    decimate.ratio = 0.01  # reduce the vertex count to 10%
 
-    mi = tree.query((v.x, v.y, v.z))[1]
-    m = mats[mi]
+    # apply decimate modifier
+    bpy.ops.object.modifier_apply(modifier="Decimate")
 
-    new_mesh.faces[i].material_index = m
+    new_mesh = bpy.context.selected_objects[0]
+    print('new', new_mesh)
 
-bmesh.update_edit_mesh(obj.data)
+    bpy.ops.export_scene.obj(filepath=os.path.join(instance_path, 'model_remeshed.obj'), use_selection=True)
+    print('export remesh done')
 
-toggle_edit_mode()
+    idx += 1
+    if idx > 5:
+        break
+    # bpy.ops.object.delete()

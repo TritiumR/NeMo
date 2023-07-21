@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Ma"
+  given-names: "Wufei"
+title: "Neural Mesh Models for 3D Reasoning"
+version: 1.0.0
+date-released: 2022-12
+url: "https://github.com/wufeim/NeMo"
