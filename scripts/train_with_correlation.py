@@ -9,7 +9,6 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
-# import wandb
 
 from nemo.models.feature_banks import mask_remove_near
 from nemo.utils import construct_class_by_name
@@ -21,8 +20,8 @@ from nemo.utils import setup_logging
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Training a NeMo model")
-    parser.add_argument("--cate", type=str, default="aeroplane")
+    parser = argparse.ArgumentParser(description="Training a NeMo model with correlation")
+    parser.add_argument("--cate", type=str, default="car")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--save_dir", type=str, required=True)
     parser.add_argument("--dry_run", action="store_true")

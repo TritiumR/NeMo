@@ -5,7 +5,7 @@ import point_cloud_utils as pcu
 
 imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
 points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
-save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/02958343'
+save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
 
 if not os.path.exists(save_path):
     os.makedirs(save_path)
@@ -24,7 +24,7 @@ for instance_id in instance_ids:
 
     poisson_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=10)[0]
 
-    o3d.io.write_triangle_mesh(os.path.join(save_path, f"{instance_id}_recon_mesh.ply"), poisson_mesh)
+    o3d.io.write_triangle_mesh(os.path.join(save_path, f"{instance_id}", "recon_mesh.ply"), poisson_mesh)
 
     idx += 1
     print(idx, 'done')
