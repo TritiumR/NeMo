@@ -42,9 +42,7 @@ def mask_remove_near(
     with torch.no_grad():
         # distance -> [n, k, k]
         distance = torch.sum(
-            (torch.unsqueeze(keypoints, dim=1) - torch.unsqueeze(keypoints, dim=2)).pow(
-                2
-            ),
+            (torch.unsqueeze(keypoints, dim=1) - torch.unsqueeze(keypoints, dim=2)).pow(2),
             dim=3,
         ).pow(0.5)
         if num_neg == 0:

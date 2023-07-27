@@ -263,7 +263,7 @@ for instance_id in instance_ids:
 
                 image = np.array((image / image.max()) * 255).astype(np.uint8)
 
-                mixed_image = (image * 0.9 + img * 0.1).astype(np.uint8)
+                mixed_image = (image * 0.7 + img * 0.3).astype(np.uint8)
                 Image.fromarray(mixed_image).save(os.path.join(instance_path, f'curr_{point_idx}_{count_id}.jpg'))
 
             img_path = os.path.join(imgs_path, prev_instance_id)
@@ -290,7 +290,7 @@ for instance_id in instance_ids:
 
                 image = np.array((image / image.max()) * 255).astype(np.uint8)
 
-                mixed_image = (image * 0.9 + img * 0.1).astype(np.uint8)
+                mixed_image = (image * 0.7 + img * 0.3).astype(np.uint8)
                 Image.fromarray(mixed_image).save(os.path.join(instance_path, f'prev_{point_idx}_{count_id}.jpg'))
 
     prev_x = x
