@@ -19,10 +19,10 @@ def load_off(off_file_name, to_torch=False):
 
     file_list = file_handle.readlines()
     n_points = int(file_list[1].split(" ")[0])
-    all_strings = "".join(file_list[2 : 2 + n_points])
+    all_strings = "".join(file_list[2:2 + n_points])
     array_ = np.fromstring(all_strings, dtype=np.float32, sep="\n")
 
-    all_strings = "".join(file_list[2 + n_points :])
+    all_strings = "".join(file_list[2 + n_points:])
     array_int = np.fromstring(all_strings, dtype=np.int32, sep="\n")
 
     array_ = array_.reshape((-1, 3))
