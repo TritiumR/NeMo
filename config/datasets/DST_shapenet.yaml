@@ -1,12 +1,14 @@
 name: synthetic_shapenet
 class_name: nemo.datasets.synthetic_shapenet.SyntheticShapeNet
-root_path: data/DST-pose-fix-distance
-shapenet_path: data/ShapeNet/Reconstruct
+root_path: data/CorrData
 
 synset_name:
     car: "02958343"
     chair: "03001627"
     motorbike: "03790512"
+
+image_sizes: 512
+num_verts: 3072
 
 render_scale:
     car: 0.9
@@ -14,8 +16,7 @@ render_scale:
     motorbike: 0.9
 
 num_models:
-    train: 2000
-    val: 500
+    train: 30
+    val: 10
 
-sampler:
-    class_name: nemo.torch_utils.misc.InfiniteSampler
+sampler: None
