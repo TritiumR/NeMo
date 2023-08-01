@@ -67,6 +67,7 @@ class NeMo(BaseModel):
             if self.raster_conf['down_rate'] == -1:
                 self.raster_conf['down_rate'] = self.net.module.net_stride
             self.net.module.kwargs['n_vert'] = self.num_verts
+            self.projector = None
         else:
             self.projector = None
 
