@@ -182,14 +182,34 @@ phong_renderer = MeshRenderer(
     shader=HardPhongShader(device=device, lights=lights, cameras=cameras),
 )
 
-annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/aeroplane'
-imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
-recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
-mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
-save_path = '../visual/SegmentTransfer'
+if config.cat_type == 'car':
+    annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/car'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple/train/car'
+    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
+    mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
+    save_path = '../visual/SegmentTransfer/car'
+    ref_path = '../data/CorrData/segment_part/car'
+    chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
 
-ref_path = '../data/CorrData/segment_part/plane'
-chosen_instance = '1a888c2c86248bbcf2b0736dd4d8afe0'
+    R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
+                           [-0.9333, 0.2898, 0.2122],
+                           [-0.0980, -0.7737, 0.6259]]]).to(device)
+    T_can = torch.tensor([[[-0.0161], [-0.0014], [-0.0346]]]).to(device)
+elif config.cat_type == 'plane':
+    annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/aeroplane'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
+    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
+    mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
+    save_path = '../visual/SegmentTransfer/plane'
+    ref_path = '../data/CorrData/segment_part/plane'
+    # chosen_instance = '1a888c2c86248bbcf2b0736dd4d8afe0'
+    chosen_instance = '1a32f10b20170883663e90eaf6b4ca52'
+    R_can = torch.tensor([[[-0.1290, 0.8888, 0.4397],
+                           [-0.5100, 0.3208, -0.7981],
+                           [-0.8505, -0.3272, 0.4119]]]).to(device)
+    T_can = torch.tensor([[[0.0], [0.0], [0.0]]]).to(device)
+else:
+    raise ValueError('Wrong type')
 
 save_path = os.path.join(save_path, chosen_instance)
 if not os.path.exists(save_path):
@@ -238,16 +258,6 @@ else:
     prev_idx = np.random.choice(len(v), config.num_pts, replace=True)
 prev_x = torch.from_numpy(v[prev_idx]).to(device, dtype=torch.float32)
 x_label = part_label[prev_idx]
-# # car
-# R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
-#                        [-0.9333, 0.2898, 0.2122],
-#                        [-0.0980, -0.7737, 0.6259]]]).to(device)
-# T_can = torch.tensor([[[-0.0161], [-0.0014], [-0.0346]]]).to(device)
-# # plane
-R_can = torch.tensor([[[-0.1290, 0.8888, 0.4397],
-                     [-0.5100, 0.3208, -0.7981],
-                     [-0.8505, -0.3272, 0.4119]]]).to(device)
-T_can = torch.tensor([[[0.0], [0.0], [0.0]]]).to(device)
 
 label, prev_feats = capsule_decompose(prev_x, R_can, T_can)
 prev_feats = prev_feats[0, :, 0, :, 0]
@@ -288,10 +298,14 @@ for instance_id in instance_ids:
     vis_pts_att(x.cpu(), label.cpu(), os.path.join(instance_path, f'decompose.png'))
     vis_pts_att(points, trans_part_label, os.path.join(instance_path, f'transfer_part.png'))
 
-    # load original mesh
-    mesh_fn = os.path.join(mesh_path, instance_id, 'models', 'model_normalized.obj')
-    verts, faces_idx, _ = load_obj(mesh_fn, device=device)
-    faces = faces_idx.verts_idx
+    if config.ori_mesh:
+        # load original mesh
+        mesh_fn = os.path.join(mesh_path, instance_id, 'models', 'model_normalized.obj')
+        verts, faces_idx, _ = load_obj(mesh_fn, device=device)
+        faces = faces_idx.verts_idx
+    else:
+        verts = torch.from_numpy(recon_verts.astype(np.float32)).to(device)
+        faces = torch.from_numpy(recon_faces.astype(np.int32)).to(device)
 
     # normalize
     vert_middle = (verts.max(axis=0)[0] + verts.min(axis=0)[0]) / 2
@@ -305,11 +319,10 @@ for instance_id in instance_ids:
     kdtree = KDTree(points)
     _, nearest_idx = kdtree.query(verts.cpu(), k=1)
     trans_part_label = trans_part_label[nearest_idx][:, 0]
-    print('trans_part_label: ', trans_part_label.shape)
 
     # construct mesh
     cmap = plt.get_cmap('jet')
-    colors = cmap(trans_part_label)
+    colors = cmap((trans_part_label - trans_part_label.min()) / (trans_part_label.max() - trans_part_label.min()))
     verts_features = torch.tensor(colors[:, :3], dtype=torch.float32)[None]  # (1, V, 3)
     textures = Textures(verts_features=verts_features.to(device))
 

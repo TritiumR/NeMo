@@ -23,44 +23,47 @@ def to_mask(y, max_size):
     return y_onehot
 
 
-def remove_near_vertices_dist(vert_dist, thr, num_neg, neg_weight, eps=1e5):
+def remove_near_vertices_dist(vert_dist, thr, num_neg, kappas={'pos': 0, 'near': 1e5, 'clutter': 0}, **kwargs):
     dtype_template = vert_dist
     with torch.no_grad():
         if num_neg == 0:
-            return ((vert_dist <= thr).type_as(dtype_template) - torch.eye(vert_dist.shape[1]).type_as(dtype_template).unsqueeze(dim=0)) * eps
+            return (vert_dist <= thr).type_as(dtype_template) * kappas['near'] - torch.eye(vert_dist.shape[1]).type_as(
+                dtype_template).unsqueeze(dim=0) * (kappas['near'] - kappas['pos'])
         else:
-            tem = (vert_dist <= thr).type_as(dtype_template) - torch.eye(vert_dist.shape[1]).type_as(dtype_template).unsqueeze(dim=0)
-            return torch.cat([tem * eps, - torch.ones(vert_dist.shape[0: 2] + (num_neg, )).type_as(dtype_template) * math.log(neg_weight)], dim=2)
+            tem = (vert_dist <= thr).type_as(dtype_template) * kappas['near'] - torch.eye(vert_dist.shape[1]).type_as(
+                dtype_template).unsqueeze(dim=0) * (kappas['near'] - kappas['pos'])
+            return torch.cat(
+                [tem, torch.ones(vert_dist.shape[0: 2] + (num_neg,)).type_as(dtype_template) * kappas['clutter']],
+                dim=2)
 
 
-def mask_remove_near(
-    keypoints, thr, dtype_template=None, num_neg=0, neg_weight=1, eps=1e5
-):
+def mask_remove_near(keypoints, thr, dtype_template=None, num_neg=0, neg_weight=1,
+                     kappas={'pos': 0, 'near': 1e5, 'clutter': 0}):
     if dtype_template is None:
         dtype_template = torch.ones(1, dtype=torch.float32)
     # keypoints -> [n, k, 2]
     with torch.no_grad():
         # distance -> [n, k, k]
         distance = torch.sum(
-            (torch.unsqueeze(keypoints, dim=1) - torch.unsqueeze(keypoints, dim=2)).pow(2),
+            (torch.unsqueeze(keypoints, dim=1) - torch.unsqueeze(keypoints, dim=2)).pow(
+                2
+            ),
             dim=3,
         ).pow(0.5)
         if num_neg == 0:
-            return (
-                (distance <= thr.unsqueeze(1).unsqueeze(2)).type_as(dtype_template)
-                - torch.eye(keypoints.shape[1]).type_as(dtype_template).unsqueeze(dim=0)
-            ) * eps
+            return (distance <= thr.unsqueeze(1).unsqueeze(2)).type_as(dtype_template) * kappas['near'] - torch.eye(
+                keypoints.shape[1]).type_as(dtype_template).unsqueeze(dim=0) * (kappas['near'] - kappas['pos'])
         else:
             tem = (distance <= thr.unsqueeze(1).unsqueeze(2)).type_as(
                 dtype_template
-            ) - torch.eye(keypoints.shape[1]).type_as(dtype_template).unsqueeze(dim=0)
+            ) * kappas['near'] - torch.eye(keypoints.shape[1]).type_as(dtype_template).unsqueeze(dim=0) * (
+                              kappas['near'] - kappas['pos'])
             return torch.cat(
                 [
-                    tem * eps,
-                    -torch.ones(keypoints.shape[0:2] + (num_neg,)).type_as(
+                    tem,
+                    torch.ones(keypoints.shape[0:2] + (num_neg,)).type_as(
                         dtype_template
-                    )
-                    * math.log(neg_weight),
+                    ) * kappas['clutter'],
                 ],
                 dim=2,
             )
@@ -114,7 +117,7 @@ class NearestMemorySelective(nn.Module):
             )
 
             # Update trash bin
-            memory[n_pos + lru * n_neg : n_pos + (lru + 1) * n_neg, :].copy_(
+            memory[n_pos + lru * n_neg: n_pos + (lru + 1) * n_neg, :].copy_(
                 x[n_pos::, :]
             )
 
@@ -123,16 +126,16 @@ class NearestMemorySelective(nn.Module):
 
 class NearestMemoryManager(nn.Module):
     def __init__(
-        self,
-        input_size,
-        output_size,
-        K,
-        num_pos,
-        T=0.07,
-        momentum=0.5,
-        Z=None,
-        max_groups=-1,
-        num_noise=-1,
+            self,
+            input_size,
+            output_size,
+            K,
+            num_pos,
+            T=0.07,
+            momentum=0.5,
+            Z=None,
+            max_groups=-1,
+            num_noise=-1,
     ):
         super().__init__()
         self.nLem = output_size
@@ -168,9 +171,9 @@ class NearestMemoryManager(nn.Module):
         n_neg = self.num_noise  # 5
 
         if (
-            self.max_lru == -1
-            and n_neg > 0
-            and x.shape[0] <= (self.nLem - n_pos) / n_neg
+                self.max_lru == -1
+                and n_neg > 0
+                and x.shape[0] <= (self.nLem - n_pos) / n_neg
         ):
             self.max_lru = (self.memory.shape[0] - n_pos) // (n_neg * x.shape[0])
 
@@ -238,7 +241,7 @@ class NearestMemoryManager(nn.Module):
                                 + get * (1 - momentum),
                                 x[:, n_pos::, :]
                                 .contiguous()
-                                .view(-1, x.shape[2])[0 : self.memory.shape[0] - n_pos],
+                                .view(-1, x.shape[2])[0: self.memory.shape[0] - n_pos],
                             ],
                             dim=0,
                         ),
@@ -249,11 +252,11 @@ class NearestMemoryManager(nn.Module):
                     neg_parts = torch.cat(
                         [
                             self.memory[
-                                n_pos : n_pos + self.lru * n_neg * x.shape[0], :
+                            n_pos: n_pos + self.lru * n_neg * x.shape[0], :
                             ],
                             x[:, n_pos::, :].contiguous().view(-1, x.shape[2]),
                             self.memory[
-                                n_pos + (self.lru + 1) * n_neg * x.shape[0] : :, :
+                            n_pos + (self.lru + 1) * n_neg * x.shape[0]::, :
                             ],
                         ],
                         dim=0,
@@ -404,6 +407,9 @@ class NearestMemoryManager(nn.Module):
                 visible.type(self.accumulate_num.dtype), dim=0
             )
 
+    def compute_feature_dist(self, x, loss_foo=torch.nn.functional.mse_loss):
+        return loss_foo(F.normalize(x, p=2, dim=1), self.memory[0:x.shape[0]])
+
     def normalize_memory(self):
         self.memory.copy_(F.normalize(self.memory, p=2, dim=1))
 
@@ -412,3 +418,45 @@ class NearestMemoryManager(nn.Module):
         self.accumulate_num = self.accumulate_num.cuda(device)
         self.memory = self.memory.cuda(device)
         return self
+
+
+class StaticLatentMananger():
+    def __init__(self, n_latents, to_device='cuda', store_device='cpu'):
+        self.latent_set = [dict() for _ in range(n_latents)]
+        self.to_device = to_device
+        self.store_device = store_device
+        self.n_latent = n_latents
+
+    def save_latent(self, names, *args):
+        out_all = []
+        for k in range(self.n_latent):
+            out = []
+            for i, name_ in enumerate(names):
+                if torch.isnan(args[k][i].max()).item():
+                    out.append(self.latent_set[k][name_].to(args[k].device))
+                    continue
+                self.latent_set[k][name_] = args[k][i].detach().to(self.store_device)
+                out.append(args[k][i])
+            out_all.append(torch.stack(out))
+        return tuple(out_all)
+
+    def get_latent(self, names, *default_value):
+        out = [[] for _ in range(self.n_latent)]
+        for i, name_ in enumerate(names):
+            for k in range(self.n_latent):
+                if name_ in self.latent_set[k].keys():
+                    out[k].append(self.latent_set[k][name_].to(self.to_device))
+                else:
+                    out[k].append(default_value[k][i])
+        return tuple([torch.stack(t) for t in out])
+
+    def get_latent_without_default(self, names, ):
+        out = [[] for _ in range(self.n_latent)]
+        for i, name_ in enumerate(names):
+            for k in range(self.n_latent):
+                if name_ in self.latent_set[k].keys():
+                    out[k].append(self.latent_set[k][name_].to(self.to_device))
+                else:
+                    return None
+
+        return tuple([torch.stack(t) for t in out])

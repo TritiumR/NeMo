@@ -1,9 +1,11 @@
 import torch
-from pytorch3d.renderer import RasterizationSettings, MeshRasterizer, PerspectiveCameras, look_at_view_transform, camera_position_from_spherical_angles
+from pytorch3d.renderer import RasterizationSettings, MeshRasterizer, PerspectiveCameras, look_at_view_transform, \
+    camera_position_from_spherical_angles, PointLights, MeshRenderer, HardPhongShader
 from nemo.utils import rotation_theta
 from pytorch3d.structures import Meshes
 from pytorch3d.ops.interp_face_attrs import interpolate_face_attributes
 
+# if True:
 try:
     from VoGE.Renderer import GaussianRenderSettings, GaussianRenderer
     from VoGE.Meshes import GaussianMeshesNaive as GaussianMesh
@@ -14,9 +16,12 @@ try:
 except:
     enable_voge = False
 
+
 def to_tensor(val):
     if isinstance(val, torch.Tensor):
         return val[None] if len(val.shape) == 2 else val
+    elif isinstance(val, list):
+        return [(t if isinstance(val, torch.Tensor) else torch.from_numpy(t)) for t in val]
     else:
         get = torch.from_numpy(val)
         return get[None] if len(get.shape) == 2 else get
@@ -24,6 +29,13 @@ def to_tensor(val):
 
 def func_single(meshes, **kwargs):
     return meshes, meshes.verts_padded()
+
+
+def func_reselect(meshes, indexs, **kwargs):
+    verts_ = [meshes._verts_list[i] for i in indexs]
+    faces_ = [meshes._faces_list[i] for i in indexs]
+    meshes_out = Meshes(verts=verts_, faces=faces_).to(meshes.device)
+    return meshes_out, meshes_out.verts_padded()
 
 
 class PackedRaster():
@@ -49,27 +61,34 @@ class PackedRaster():
 
         self.mesh_mode = mesh_mode
         self.kwargs = raster_configs
-        self.down_rate = raster_configs.get('down_rate')
 
         image_size = raster_configs.get('image_size')
-        feature_size = (image_size[0] // raster_configs.get('down_rate'), image_size[1] // raster_configs.get('down_rate'))
-        cameras = PerspectiveCameras(focal_length=raster_configs.get('focal_length', 3000) / raster_configs.get('down_rate'), principal_point=((feature_size[1] // 2, feature_size[0] // 2,), ), image_size=(feature_size, ), in_ndc=False, device=device)
+        feature_size = (
+        image_size[0] // raster_configs.get('down_rate'), image_size[1] // raster_configs.get('down_rate'))
+        cameras = PerspectiveCameras(
+            focal_length=raster_configs.get('focal_length', 3000) / raster_configs.get('down_rate'),
+            principal_point=((feature_size[1] // 2, feature_size[0] // 2,),), image_size=(feature_size,), in_ndc=False,
+            device=device)
         self.cameras = cameras
+        self.down_rate = raster_configs.get('down_rate')
 
         if raster_type == 'near' or raster_type == 'triangle':
-            raster_setting = RasterizationSettings(image_size=feature_size, blur_radius=raster_configs.get('blur_radius', 0.0), )
+            raster_setting = RasterizationSettings(image_size=feature_size,
+                                                   blur_radius=raster_configs.get('blur_radius', 0.0), )
             self.raster = MeshRasterizer(raster_settings=raster_setting, cameras=cameras)
 
             if isinstance(object_mesh, Meshes):
                 self.meshes = object_mesh.to(device)
             elif isinstance(object_mesh, dict):
-                self.meshes = Meshes(verts=to_tensor(object_mesh['verts']), faces=to_tensor(object_mesh['faces'])).to(device)
+                self.meshes = Meshes(verts=to_tensor(object_mesh['verts']), faces=to_tensor(object_mesh['faces'])).to(
+                    device)
             else:
                 self.meshes = Meshes(verts=to_tensor(object_mesh[0]), faces=to_tensor(object_mesh[1])).to(device)
         if raster_type == 'voge' or raster_type == 'vogew':
             assert enable_voge, 'VoGE must be install to utilize voge-nemo.'
             self.kp_vis_thr = raster_configs.get('kp_vis_thr', 0.25)
-            render_setting = GaussianRenderSettings(image_size=feature_size, max_point_per_bin=-1, max_assign=raster_configs.get('max_assign', 20))
+            render_setting = GaussianRenderSettings(image_size=feature_size, max_point_per_bin=-1,
+                                                    max_assign=raster_configs.get('max_assign', 20))
             self.render = GaussianRenderer(render_settings=render_setting, cameras=cameras).to(device)
             self.meshes = GaussianMesh(*naive_vertices_converter(*object_mesh, percentage=0.5)).to(device)
 
@@ -84,41 +103,84 @@ class PackedRaster():
             return self.meshes.verts_padded()
 
     def __call__(self, azim, elev, dist, theta, **kwargs):
-        R, T = look_at_view_transform(dist=dist, azim=azim, elev=elev, degrees=self.use_degree, device=self.cameras.device)
+        R, T = look_at_view_transform(dist=dist, azim=azim, elev=elev, degrees=self.use_degree,
+                                      device=self.cameras.device)
         R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
-        
-        this_cameras = self.cameras.clone()
-        this_cameras.R = R
-        this_cameras.T = T
-
-        if kwargs.get('principal', None) is not None:
-            this_cameras._N = R.shape[0]
-            this_cameras.principal_point = kwargs.get('principal', None).to(self.cameras.device) / self.down_rate
 
         if self.mesh_mode == 'single' and self.raster_type == 'near':
-            return get_one_standard(self.raster, this_cameras, self.meshes, func_of_mesh=func_single, **kwargs, **self.kwargs)
-        if self.raster_type == 'voge':
-            # Return voge.fragments
-            frag = self.render(self.meshes, R=R, T=T)
-            get_dict = frag.to_dict()
-            get_dict['start_idx'] = torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device) 
-            # if torch.any( torch.nn.functional.relu(1 - frag.vert_weight.sum(3).view(R.shape[0], -1)).sum(1) < 1 ):
-            return get_dict
-        if self.raster_type == 'vogew':
-            # Return voge.fragments
-            frag = self.render(self.meshes, R=R, T=T)
-            get_dict = frag.to_dict()
-            get_dict['start_idx'] = torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device) 
-            get_weight = torch.zeros((*frag.vert_index.shape[0:-1], self.meshes.verts.shape[0] + 1), device=frag.vert_index.device)
-            ind = frag.vert_index.long() - torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device)[:, None, None, None] * self.meshes.verts.shape[0]
-            ind[ind < 0] = -1
-            # weight_ = torch.cat((torch.zeros((*frag.vert_index.shape[0:-1], 1), device=frag.vert_index.device), frag.vert_weight, ), dim=-1)
-            ind += 1
-            get_weight = ind_fill(get_weight, ind, frag.vert_weight, dim=3)
-            return get_weight[..., 1:]
+            this_cameras = self.cameras.clone()
+            this_cameras.R = R
+            this_cameras.T = T
+
+            if kwargs.get('principal', None) is not None:
+                this_cameras._N = R.shape[0]
+                this_cameras.principal_point = kwargs.get('principal', None).to(self.cameras.device) / self.down_rate
+
+            image = None
+            if kwargs.get('visual', None) is not None:
+                # render config
+                render_image_size = (512, 512)
+
+                raster_settings = RasterizationSettings(
+                    image_size=render_image_size,
+                    blur_radius=0.0,
+                    faces_per_pixel=1,
+                    bin_size=0
+                )
+                # We can add a point light in front of the object.
+                lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
+
+                # prepare camera
+                cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+                                             principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+                                             image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+
+                phong_renderer = MeshRenderer(
+                    rasterizer=MeshRasterizer(
+                        cameras=cameras,
+                        raster_settings=raster_settings
+                    ),
+                    shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
+                )
+
+                meshes_update = self.meshes
+
+                image = phong_renderer(meshes_world=meshes_update.clone(), R=R, T=T)
+                image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+
+            return get_one_standard(self.raster, this_cameras, self.meshes, func_of_mesh=func_single, **kwargs,
+                                    **self.kwargs) + (image,)
+        else:
+            if kwargs.get('principal', None) is not None:
+                self.render.cameras._N = R.shape[0]
+                self.render.cameras.principal_point = kwargs.get('principal', None).to(
+                    self.cameras.device) / self.down_rate
+
+            if self.raster_type == 'voge':
+                # Return voge.fragments
+                frag = self.render(self.meshes, R=R, T=T)
+                get_dict = frag.to_dict()
+                get_dict['start_idx'] = torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device)
+                # if torch.any( torch.nn.functional.relu(1 - frag.vert_weight.sum(3).view(R.shape[0], -1)).sum(1) < 1 ):
+                return get_dict
+            if self.raster_type == 'vogew':
+                # Return voge.fragments
+                frag = self.render(self.meshes, R=R, T=T)
+                get_dict = frag.to_dict()
+                get_dict['start_idx'] = torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device)
+                get_weight = torch.zeros((*frag.vert_index.shape[0:-1], self.meshes.verts.shape[0] + 1),
+                                         device=frag.vert_index.device)
+                ind = frag.vert_index.long() - torch.arange(frag.vert_index.shape[0]).to(frag.vert_index.device)[:,
+                                               None, None, None] * self.meshes.verts.shape[0]
+                ind[ind < 0] = -1
+                # weight_ = torch.cat((torch.zeros((*frag.vert_index.shape[0:-1], 1), device=frag.vert_index.device), frag.vert_weight, ), dim=-1)
+                ind += 1
+                get_weight = ind_fill(get_weight, ind, frag.vert_weight, dim=3)
+                return get_weight[..., 1:]
 
 
-def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3, **kwargs):
+def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3,
+                     **kwargs):
     # dist_thr => NeMo original repo: cal_occ_one_image: eps
     mesh_, verts_ = func_of_mesh(mesh, **kwargs)
 
@@ -128,14 +190,14 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
     # Calculate the camera location
     cam_loc = -torch.matmul(torch.inverse(R), T[..., None])[:, :, 0]
 
-    # (B, K, 2), in yx format
+    # (B, K, 2)
     project_verts = camera.transform_points(verts_)[..., 0:2].flip(-1)
-
     # Don't know why, hack. Checked by visualization
     project_verts = 2 * camera.principal_point[:, None].float().flip(-1) - project_verts
 
     # (B, K)
-    inner_mask = torch.min(camera.image_size.unsqueeze(1) > project_verts, dim=-1)[0] & torch.min(0 < project_verts, dim=-1)[0]
+    inner_mask = torch.min(camera.image_size.unsqueeze(1) > torch.ones_like(project_verts), dim=-1)[0] & \
+                 torch.min(0 < torch.ones_like(project_verts), dim=-1)[0]
 
     if restrict_to_boundary:
         # image_size -> (h, w)
@@ -143,20 +205,27 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
         project_verts = torch.max(project_verts, torch.zeros_like(project_verts))
 
     raster.cameras = camera
-    frag = raster(mesh_.extend(R.shape[0]), R=R, T=T)
+    frag = raster(mesh_.extend(R.shape[0]) if mesh_._N == 1 else mesh_, R=R, T=T)
 
     true_dist_per_vert = (cam_loc[:, None] - verts_).pow(2).sum(-1).pow(.5)
-    face_dist = torch.gather(true_dist_per_vert[:, None].expand(-1, mesh_.faces_padded().shape[1], -1), dim=2, index=mesh_.faces_padded().expand(true_dist_per_vert.shape[0], -1, -1))
+    face_dist = torch.gather(true_dist_per_vert[:, None].expand(-1, mesh_.faces_padded().shape[1], -1), dim=2,
+                             index=mesh_.faces_padded().expand(true_dist_per_vert.shape[0], -1, -1))
 
     # (B, 1, H, W)
     # depth_ = frag.zbuf[..., 0][:, None]
-    depth_ = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_dist.view(-1, 3, 1))[:, :, :, 0, 0][:, None]
+    depth_ = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_dist.view(-1, 3, 1))[:, :, :, 0, 0][:,
+             None]
 
     grid = project_verts[:, None] / torch.Tensor(list(depth_.shape[2:])).to(project_verts.device) * 2 - 1
-    
-    sampled_dist_per_vert = torch.nn.functional.grid_sample(depth_, grid.flip(-1), align_corners=False, mode='nearest')[:, 0, 0, :]
+
+    sampled_dist_per_vert = torch.nn.functional.grid_sample(depth_, grid.flip(-1), align_corners=False, mode='nearest')[
+                            :, 0, 0, :]
 
     vis_mask = torch.abs(sampled_dist_per_vert - true_dist_per_vert) < dist_thr
+
+    # if isinstance(func_of_mesh, func_reselect):
+    #     for i in range(R.shape[0]):
+    #         vis_mask[i, mesh_._num_verts_per_mesh[i]:] = False
 
     # import numpy as np
     # import BboxTools as bbt
@@ -170,8 +239,18 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
     #     for k, vv in zip(kps[0], vis_mask_[0]):
     #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
     #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
+
     #     return im
-    # foo(tt, vis_mask).save('ttr.jpg')
+
+    # foo(tt, vis_mask).show()
     # import ipdb
     # ipdb.set_trace()
+    if kwargs.get('order', None) is not None:
+        order = kwargs['order']
+        project_verts = project_verts[:, order]
+        vis_mask = vis_mask[:, order]
+        inner_mask = inner_mask[:, order]
+
     return project_verts, vis_mask & inner_mask
+
+

@@ -64,6 +64,12 @@ main_arg.add_argument("--using_feature",
                       default=False,
                       action="store_true",
                       help="Similarity with feature")
+main_arg.add_argument("--ori_mesh",
+                      default=False,
+                      action="store_true",
+                      help="Similarity with feature")
+main_arg.add_argument("--cat_type", type=str,
+                       default="car")
 
 # ----------------------------------------
 # Arguments for model 

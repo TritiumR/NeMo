@@ -1,89 +1,125 @@
 import os
-
+import sys
+from PIL import Image
 import cv2
 import numpy as np
+import torch
 from torch.utils.data import Dataset
+import torchvision
+import point_cloud_utils as pcu
 
 from nemo.utils import get_abs_path
 
 
 class SyntheticShapeNet(Dataset):
-    def __init__(self, data_type, category, root_path, shapenet_path, data_camera_mode='shapnet_car', **kwargs):
+    def __init__(self, data_type, category, root_path, data_camera_mode='shapnet_car', **kwargs):
         super().__init__()
         self.data_type = data_type
         self.category = category
         self.root_path = get_abs_path(root_path)
         self.data_camera_mode = data_camera_mode
-        self.shape_path = os.path.join(shapenet_path, 'ShapeNetCore.v2')
-        self.transforms = transforms
 
-        self.img_path = os.path.join(self.root_path, 'Data_simple_512x512', self.data_type, self.category)
-        self.anno_path = os.path.join(self.root_path, 'Annotations', self.data_type, self.category)
-        self.mesh_path = os.path.join(self.shape_path, self.category)
+        cat_off = dict()
+        cat_off['car'] = "02958343"
+
+        self.img_path = os.path.join(self.root_path, 'image', self.data_type, self.category)
+        self.render_img_path = os.path.join(self.root_path, 'render_img', self.data_type, self.category)
+        self.index_path = os.path.join(self.root_path, 'index', self.category, '4d22bfe3097f63236436916a86a90ed7')
+        self.angle_path = os.path.join(self.root_path, 'angle', self.data_type, self.category)
+        self.mesh_path = os.path.join(self.root_path, 'mesh', self.category)
+        self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cat_off[self.category])
 
         self.instance_list = [x for x in os.listdir(self.img_path) if '.' not in x]
 
         self.img_fns = []
-        self.anno_fns = []
+        self.angle_fns = []
+        self.render_img_fns = []
+        max_verts = 0
+        max_faces = 0
+        lambda_fn = lambda x: int(x[:3])
         for instance_id in self.instance_list:
             img_list = os.listdir(os.path.join(self.img_path, instance_id))
-            self.img_fns += [os.path.join(self.img_path, x) for x in img_list]
-            anno_list = os.listdir(os.path.join(self.anno_path, instance_id))
-            self.anno_fns += [os.path.join(self.anno_path, x) for x in anno_list]
+            img_list = sorted(img_list, key=lambda_fn)
+            self.img_fns += [os.path.join(self.img_path, instance_id, x) for x in img_list]
+            angle_list = os.listdir(os.path.join(self.angle_path, instance_id))
+            angle_list = sorted(angle_list, key=lambda_fn)
+            self.angle_fns += [os.path.join(self.angle_path, instance_id, x) for x in angle_list]
+            render_img_list = os.listdir(os.path.join(self.render_img_path, instance_id))
+            render_img_list = sorted(render_img_list, key=lambda_fn)
+            self.render_img_fns += [os.path.join(self.render_img_path, instance_id, x) for x in render_img_list]
 
-        print('len: ', len(self.img_fns))
+            # print('img_fns: ', self.img_fns[-1])
+            # print('angle_fns: ', self.angle_fns[-1])
+            # print('render_img_fns: ', self.render_img_fns[-1])
+
+            assert len(self.img_fns) == len(self.angle_fns) == len(self.render_img_fns), \
+                f'{len(self.img_fns)}, {len(self.angle_fns)}, {len(self.render_img_fns)}'
+
+            verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
+            max_verts = max(max_verts, verts.shape[0])
+            max_faces = max(max_faces, faces.shape[0])
+        # print('max_verts: ', max_verts)
+        # print('max_faces: ', max_faces)
+        self.max_verts = max_verts
+        self.max_faces = max_faces
 
     def __getitem__(self, item):
         ori_img = cv2.imread(self.img_fns[item], cv2.IMREAD_UNCHANGED)
-        anno = np.load(self.anno_fns[item], allow_pickle=True)[()]
+        render_img = cv2.imread(self.render_img_fns[item], cv2.IMREAD_UNCHANGED)
+        # ori_img = Image.open(self.img_fns[item]).convert('RGBA')
+        ori_img = np.array(ori_img)
+        render_img = np.array(render_img)
+        # print('ori_img.shape: ', ori_img.shape)
+        # print('render_img.shape: ', render_img.shape)
+        angle = np.load(self.angle_fns[item], allow_pickle=True)[()]
 
         instance_id = self.img_fns[item].split('/')[-2]
-        verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, instance_id, 'recon_mesh.ply'))
+        verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
+        index = np.load(os.path.join(self.index_path, instance_id, 'index.npy'), allow_pickle=True)[()]
 
-        # decompose using point cloud
-        v = verts
-        idx = np.random.choice(len(v), config.num_pts, replace=False)
-        x = torch.from_numpy(v[idx]).to(device, dtype=torch.float32)
-        R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
-                               [-0.9333, 0.2898, 0.2122],
-                               [-0.0980, -0.7737, 0.6259]]]).to(device)
-        T_can = torch.tensor([[[-0.0161], [-0.0014], [-0.0346]]]).to(device)
-        _, feats = capsule_decompose(x, R_can, T_can)
-
-        # construct mesh
+        # faces
         faces = torch.from_numpy(faces.astype(np.int32))
+        faces_pad = torch.zeros((self.max_faces, 3), dtype=torch.int32)
+        faces_pad[:faces.shape[0], :] = faces
 
         # normalize
         vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
         vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-        verts = (verts - vert_middle) / vert_scale
+        verts = verts - vert_middle
+        verts = verts / vert_scale
         verts = torch.from_numpy(verts.astype(np.float32))
+        verts_pad = torch.zeros((self.max_verts, 3), dtype=torch.float32)
+        verts_pad[:verts.shape[0], :] = verts
 
-        verts_features = torch.ones_like(verts)[None]  # (1, V, 3)
-        textures = Textures(verts_features=verts_features.to(device))
+        img = ori_img.transpose(2, 0, 1)
+        mask = render_img[:, :, 3]
+        mask = cv2.resize(mask, (img.shape[2], img.shape[1]), interpolation=cv2.INTER_NEAREST)
+        mask[mask > 0] = 1
+        # vis_mask = mask * 255
+        # cv2.imwrite(get_abs_path('visual/mask.png'), vis_mask)
 
-        mesh = Meshes(
-            verts=[verts],
-            faces=[faces],
-            textures=textures
-        )
+        distance = angle['dist']
+        elevation = np.pi / 2 - angle['phi']
+        azimuth = angle['theta'] + np.pi / 2
+        theta = angle['camera_rotation']
 
-        # downsample
+        sample = dict()
 
+        img = img / 255.0
+        sample['img'] = np.ascontiguousarray(img).astype(np.float32)
+        sample['obj_mask'] = np.ascontiguousarray(mask).astype(np.float32)
 
-        img = ori_img[:, :, :3][:, :, ::-1]
-        mask = ori_img[:, :, 3:4]
+        sample['verts'] = verts_pad
+        sample['verts_len'] = verts.shape[0]
+        sample['faces'] = faces_pad
+        sample['faces_len'] = faces.shape[0]
+        sample['distance'] = distance
+        sample['elevation'] = elevation
+        sample['azimuth'] = azimuth
+        sample['theta'] = theta
 
-        condinfo = np.array([
-            anno['rotation'],
-            np.pi / 2.0 - anno['elevation']
-        ], dtype=np.float32)
+        sample['index'] = index
 
-        sample = {}
-        sample['img'] = np.ascontiguousarray(img)
-        sample['mask'] = np.ascontiguousarray(mask)
-        sample['mesh'] = mesh
-        sample['condinfo'] = condinfo
         return sample
 
     def __len__(self):
