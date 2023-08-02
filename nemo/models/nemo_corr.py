@@ -178,16 +178,17 @@ class NeMo(BaseModel):
                     if self.visual_mesh:
                         render_img = np.array((render_img / render_img.max()) * 255).astype(np.uint8)
                         vis_img = vis_img * 0.3 + render_img * 0.7
-                    # print('circle: ', kp[0][0].item(), kp[0][1].item())
-                    if kpvis[0] == 1:
-                        vis_img = cv2.circle(vis_img, (int(kp[0][0].item()), int(kp[0][1].item())), 3, (0, 0, 255), -1)
-                    # else:
-                    #     vis_img = cv2.circle(vis_img, (int(kp[0][0].item()), int(kp[0][1].item())), 3, (255, 0, 0), -1)
+                    vis_id = 2
+                    if kpvis[vis_id] == 1:
+                        vis_img = cv2.circle(vis_img, (int(kp[vis_id][1].item()), int(kp[vis_id][0].item())), 3, (0, 0, 255), -1)
+                    else:
+                        vis_img = cv2.circle(vis_img, (int(kp[vis_id][1].item()), int(kp[vis_id][0].item())), 3, (255, 0, 0), -1)
                     cv2.imwrite(f'visual/{batch_id}.png', vis_img)
 
                 kp_list.append(kp)
                 kpvis_list.append(kpvis)
 
+        # exit(0)
         kp = torch.stack(kp_list)
         kpvis = torch.stack(kpvis_list)
         # print('kp: ', kp.shape)

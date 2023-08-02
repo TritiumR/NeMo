@@ -65,7 +65,6 @@ for instance_id in instance_ids:
     vert_range = verts.max(dim=0)[0] - verts.min(dim=0)[0]
     scale = (vert_range ** 2).sum() ** 0.5
     # print('scale: ', scale, 'middle: ', vert_middle)
-    # verts = pre_process_mesh_pascal(verts)
     faces = faces_idx.verts_idx
     verts_features = torch.ones_like(verts)[None]  # (1, V, 3)
     textures = Textures(verts_features=verts_features.to(device))

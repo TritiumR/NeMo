@@ -21,6 +21,10 @@ class SyntheticShapeNet(Dataset):
 
         cat_off = dict()
         cat_off['car'] = "02958343"
+        if self.category == 'car':
+            self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
+            self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
+                             '67a3dfa9fb2d1f2bbda733a39f84326d']
 
         self.img_path = os.path.join(self.root_path, 'image', self.data_type, self.category)
         self.render_img_path = os.path.join(self.root_path, 'render_img', self.data_type, self.category)
@@ -38,6 +42,8 @@ class SyntheticShapeNet(Dataset):
         max_faces = 0
         lambda_fn = lambda x: int(x[:3])
         for instance_id in self.instance_list:
+            if instance_id in self.skip_list:
+                continue
             img_list = os.listdir(os.path.join(self.img_path, instance_id))
             img_list = sorted(img_list, key=lambda_fn)
             self.img_fns += [os.path.join(self.img_path, instance_id, x) for x in img_list]
@@ -76,6 +82,8 @@ class SyntheticShapeNet(Dataset):
         instance_id = self.img_fns[item].split('/')[-2]
         verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
         index = np.load(os.path.join(self.index_path, instance_id, 'index.npy'), allow_pickle=True)[()]
+        # offset = np.load(os.path.join(self.index_path, instance_id, 'offset.npy'), allow_pickle=True)[()]
+
 
         # faces
         faces = torch.from_numpy(faces.astype(np.int32))
@@ -84,6 +92,8 @@ class SyntheticShapeNet(Dataset):
 
         # normalize
         vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
+        if instance_id in self.ray_list:
+            vert_middle[1] += 0.05
         vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
         verts = verts - vert_middle
         verts = verts / vert_scale

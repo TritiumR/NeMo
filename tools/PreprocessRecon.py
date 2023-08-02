@@ -101,6 +101,11 @@ if len(unparsed) > 0:
     print_usage()
     exit(1)
 
+num_precess_point = int(input('num_precess_point: '))
+if num_precess_point > config.num_pts:
+    print('no more than num_pts')
+    exit(1)
+
 config.res_dir = '../../canonical-capsules/logs'
 
 network = Network(config)
@@ -115,10 +120,20 @@ def capsule_decompose(pc, R=None, T=None):
     return _labels, _feats
 
 
-imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
-recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/02958343'
-save_path = '../data/ShapeNet/Preprocess/02958343'
-chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
+if config.cat_type == 'car':
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
+    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
+    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
+    save_path = '../data/ShapeNet/Preprocess/car'
+    chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
+elif config.cat_type == 'plane':
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
+    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
+    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
+    save_path = '../data/ShapeNet/Preprocess/plane'
+    chosen_instance = '1a888c2c86248bbcf2b0736dd4d8afe0'
+else:
+    raise NotImplementedError
 
 save_path = os.path.join(save_path, chosen_instance)
 if not os.path.exists(save_path):
@@ -130,6 +145,13 @@ if not os.path.exists(instance_path):
 
 recon_fn = os.path.join(recon_path, f"{chosen_instance}_recon_mesh.ply")
 verts, faces, _, _ = pcu.load_mesh_vfnc(recon_fn)
+
+# normalize (scale: recon, offset:ori)
+vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
+ori_fn = os.path.join(ori_mesh_path, chosen_instance, 'models', 'model_normalized.obj')
+ori_verts, _, _ = load_obj(ori_fn, device=device)
+vert_middle = (ori_verts.max(dim=0)[0] + ori_verts.min(dim=0)[0]) / 2 * vert_scale
+np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
 
 # decompose using point cloud
 v = verts
@@ -155,7 +177,16 @@ for instance_id in instance_ids:
 
     # using processed mesh
     recon_fn = os.path.join(recon_path, f"{instance_id}_recon_mesh.ply")
-    verts, faces, _, _ = pcu.load_mesh_vfnc(recon_fn)
+    verts, _, _, _ = pcu.load_mesh_vfnc(recon_fn)
+
+    # normalize (scale: recon, offset:ori)
+    vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
+    ori_fn = os.path.join(ori_mesh_path, instance_id, 'models', 'model_normalized.obj')
+    ori_verts, _, _ = load_obj(ori_fn, device=device)
+    vert_middle = (ori_verts.max(dim=0)[0] + ori_verts.min(dim=0)[0]) / 2 * vert_scale
+    # ori_scale = ((ori_verts.max(dim=0)[0] - ori_verts.min(dim=0)[0]) ** 2).sum() ** 0.5
+    # print('ori_scale: ', ori_scale)
+    np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
 
     # decompose using point cloud
     v = verts
@@ -172,8 +203,8 @@ for instance_id in instance_ids:
     _, nearest_idx = kdtree.query(verts, k=1)
 
     idx_list = []
-    render_idx = np.random.randint(0, config.num_pts)
-    for point_idx in range(config.num_pts):
+    visual_list = []
+    for point_idx in range(num_precess_point):
         point_feat = prev_feats[0, :, 0, point_idx, 0]
         sim_feats = feats[0, :, 0, :, 0]
         similarity = torch.matmul(point_feat, sim_feats) / torch.norm(point_feat) / torch.norm(sim_feats, dim=0)
@@ -188,13 +219,23 @@ for instance_id in instance_ids:
 
         max_point = torch.argmax(vert_similarity)
         idx_list.append(max_point.item())
-        print("max_point:", max_point.item(), "max_sim: ", max_sim)
+        # print("max_point:", max_point.item(), "max_sim: ", max_sim)
 
-    # visualize
-    prev_label = np.zeros(config.num_pts)
-    prev_label[config.num_pts - 1] = 1
-    vis_pts_att(verts[idx_list], similarity[nearest_idx][idx_list].cpu(), os.path.join(instance_path, f'curr_{max_sim}.png'))
-    vis_pts_att(prev_x.cpu(), prev_label, os.path.join(instance_path, f'prev_{max_sim}.png'))
+    # # visualize last point correspondence
+    # prev_label = np.zeros(config.num_pts)
+    # prev_label[config.num_pts - 1] = 1
+    # vis_pts_att(verts[idx_list], similarity[nearest_idx][idx_list].cpu(), os.path.join(instance_path, f'curr_{max_sim}.png'))
+    # vis_pts_att(prev_x.cpu(), prev_label, os.path.join(instance_path, f'prev_{max_sim}.png'))
+
+    # visualize first 10 points correspondence
+    visual_label = np.zeros(num_precess_point)
+    for i in range(20):
+        visual_label[i] = i
+
+    prev_x = prev_x[:num_precess_point]
+    idx_list = idx_list[:num_precess_point]
+    vis_pts_att(prev_x.cpu(), visual_label, os.path.join(instance_path, f'prev.png'))
+    vis_pts_att(verts[idx_list], visual_label, os.path.join(instance_path, f'curr.png'))
 
     idx_list = np.array(idx_list)
 

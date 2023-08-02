@@ -223,6 +223,9 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
 
     vis_mask = torch.abs(sampled_dist_per_vert - true_dist_per_vert) < dist_thr
 
+    # import ipdb
+    # ipdb.set_trace()
+
     # if isinstance(func_of_mesh, func_reselect):
     #     for i in range(R.shape[0]):
     #         vis_mask[i, mesh_._num_verts_per_mesh[i]:] = False
