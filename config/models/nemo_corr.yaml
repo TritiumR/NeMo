@@ -34,6 +34,7 @@ training:
         type: near
         down_rate: 1
         dist_thr: 0.01
+        focal_length: 3200
 
 inference:
     cameras:

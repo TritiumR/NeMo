@@ -4,13 +4,14 @@ import open3d as o3d
 import point_cloud_utils as pcu
 
 cat_type = input('category type: ')
+mode = input('mode: ')
 
 if cat_type == 'car':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
+    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/car'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
     save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
 elif cat_type == 'plane':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
+    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/aeroplane'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02691156/ply'
     save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
 else:

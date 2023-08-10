@@ -10,8 +10,8 @@ from nemo.utils import load_off, save_off
 def parse_args():
     parser = argparse.ArgumentParser(description='Create cuboid meshes for NeMo')
 
-    parser.add_argument('--CAD_path', type=str, default='PASCAL3D+_release1.1/CAD')
-    parser.add_argument('--save_path', type=str, deafult='PASCAL3D+_release1.1/CAD_single')
+    parser.add_argument('--CAD_path', type=str, default='./data/PASCAL3D+_release1.1/CAD')
+    parser.add_argument('--save_path', type=str, default='./data/CAD_single')
     parser.add_argument('--mesh_d', type=str, default='single')
     parser.add_argument('--number_vertices', type=int, default=1000)
     parser.add_argument('--linear_coverage', type=float, default=0.99)
@@ -100,6 +100,7 @@ def meshelize(x_range, y_range, z_range, number_vertices):
 def create_meshes(mesh_d, CAD_path, save_path, number_vertices, linear_coverage):
     if mesh_d == 'single':
         for cate in CATEGORIES:
+            cate = 'car'
             os.makedirs(os.path.join(save_path, cate), exist_ok=True)
             fnames = [x for x in os.listdir(os.path.join(CAD_path, cate)) if x.endswith('.off')]
 
@@ -120,7 +121,7 @@ def create_meshes(mesh_d, CAD_path, save_path, number_vertices, linear_coverage)
                 out_pos.append((v_sorted[min_idx], v_sorted[min_idx + selected_shape]))
 
             xvert, xface = meshelize(*out_pos, number_vertices=number_vertices)
-            save_off(os.path.join(save_path, cate, '01.off'), xvert, xface)
+            save_off(os.path.join(save_path, cate, '3072.off'), xvert, xface)
     else:
         raise NotImplementedError
 

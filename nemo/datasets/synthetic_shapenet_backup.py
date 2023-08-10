@@ -13,43 +13,10 @@ import os
 
 
 class MeshLoader():
-    def __init__(self, dataset_config, cate='car'):
-        if cate == 'car':
-            self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
-            self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
-                             '67a3dfa9fb2d1f2bbda733a39f84326d']
+    def __init__(self, dataset_config):
+        self.mesh_path = os.path.join(self.dataset_config['root_path'], 'mesh', cate)
+        self.mesh_name_list = [t.split('_recon_mesh')[0] for t in os.listdir(self.mesh_path)]
 
-        index_path = os.path.join(dataset_config['root_path'], 'index', cate, '4d22bfe3097f63236436916a86a90ed7')
-
-        self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
-        self.mesh_name_dict = {t: i for i, t in enumerate(os.listdir(index_path))}
-        self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
-
-        self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
-
-    def get_mesh_listed(self):
-        return [t[0].numpy() for t in self.mesh_list], [t[1].numpy() for t in self.mesh_list]
-
-    def get_index_list(self, indexs):
-        return torch.from_numpy(np.array([self.index_list[t] for t in indexs]))
-
-    def get_meshes(self, instance_id, ):
-        verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
-        # offset = np.load(os.path.join(self.index_path, instance_id, 'offset.npy'), allow_pickle=True)[()]
-
-        # faces
-        faces = torch.from_numpy(faces.astype(np.int32))
-
-        # normalize
-        vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
-        if instance_id in self.ray_list:
-            vert_middle[1] += 0.05
-        vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-        verts = verts - vert_middle
-        verts = verts / vert_scale
-        verts = torch.from_numpy(verts.astype(np.float32))
-        
-        return verts, faces
 
 class SyntheticShapeNet(Dataset):
     def __init__(self, data_type, category, root_path, data_camera_mode='shapnet_car', **kwargs):
@@ -68,6 +35,8 @@ class SyntheticShapeNet(Dataset):
 
         self.img_path = os.path.join(self.root_path, 'image', self.data_type, self.category)
         self.render_img_path = os.path.join(self.root_path, 'render_img', self.data_type, self.category)
+        if self.data_type == 'train':
+            self.index_path = os.path.join(self.root_path, 'index', self.category, '4d22bfe3097f63236436916a86a90ed7')
         self.angle_path = os.path.join(self.root_path, 'angle', self.data_type, self.category)
         self.mesh_path = os.path.join(self.root_path, 'mesh', self.category)
         self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cat_off[self.category])
@@ -112,6 +81,24 @@ class SyntheticShapeNet(Dataset):
         self.max_verts = max_verts
         self.max_faces = max_faces
 
+    def get_meshes(self, instance_id, ):
+        verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
+        # offset = np.load(os.path.join(self.index_path, instance_id, 'offset.npy'), allow_pickle=True)[()]
+
+        # faces
+        faces = torch.from_numpy(faces.astype(np.int32))
+
+        # normalize
+        vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
+        if instance_id in self.ray_list:
+            vert_middle[1] += 0.05
+        vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
+        verts = verts - vert_middle
+        verts = verts / vert_scale
+        verts = torch.from_numpy(verts.astype(np.float32))
+        
+        return verts, faces
+
     def __getitem__(self, item):
         ori_img = cv2.imread(self.img_fns[item], cv2.IMREAD_UNCHANGED)
         render_img = cv2.imread(self.render_img_fns[item], cv2.IMREAD_UNCHANGED)
@@ -124,13 +111,13 @@ class SyntheticShapeNet(Dataset):
 
         instance_id = self.img_fns[item].split('/')[-2]
 
-        # verts, faces = self.get_meshes()
+        verts, faces = self.get_meshes()
 
-        # faces_pad = torch.zeros((self.max_faces, 3), dtype=torch.int32)
-        # faces_pad[:faces.shape[0], :] = faces
+        faces_pad = torch.zeros((self.max_faces, 3), dtype=torch.int32)
+        faces_pad[:faces.shape[0], :] = faces
 
-        # verts_pad = torch.zeros((self.max_verts, 3), dtype=torch.float32)
-        # verts_pad[:verts.shape[0], :] = verts
+        verts_pad = torch.zeros((self.max_verts, 3), dtype=torch.float32)
+        verts_pad[:verts.shape[0], :] = verts
 
         img = ori_img.transpose(2, 0, 1)
         mask = render_img[:, :, 3]
@@ -148,23 +135,20 @@ class SyntheticShapeNet(Dataset):
 
         img = img / 255.0
         sample['img'] = np.ascontiguousarray(img).astype(np.float32)
-        sample['img_ori'] = np.ascontiguousarray(img).astype(np.float32)
         sample['obj_mask'] = np.ascontiguousarray(mask).astype(np.float32)
 
-        # sample['verts'] = verts_pad
-        # sample['verts_len'] = verts.shape[0]
-        # sample['faces'] = faces_pad
-        # sample['faces_len'] = faces.shape[0]
+        sample['verts'] = verts_pad
+        sample['verts_len'] = verts.shape[0]
+        sample['faces'] = faces_pad
+        sample['faces_len'] = faces.shape[0]
         sample['distance'] = distance
         sample['elevation'] = elevation
         sample['azimuth'] = azimuth
         sample['theta'] = theta
-        sample['instance_id'] = instance_id
-        
 
-        # if self.data_type == 'train':
-        #     index = np.load(os.path.join(self.index_path, instance_id, 'index.npy'), allow_pickle=True)[()]
-        #     sample['index'] = index
+        if self.data_type == 'train':
+            index = np.load(os.path.join(self.index_path, instance_id, 'index.npy'), allow_pickle=True)[()]
+            sample['index'] = index
 
         return sample
 

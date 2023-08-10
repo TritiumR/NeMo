@@ -59,7 +59,7 @@ class NeMo(BaseModel):
         
         if proj_mode != 'prepared':
             raster_conf = {
-                    'image_size': self.dataset_config.image_sizes[cate],
+                    'image_size': (self.dataset_config.image_sizes, self.dataset_config.image_sizes),
                     **self.training_params.kp_projecter
                 }
             if raster_conf['down_rate'] == -1:
@@ -133,8 +133,6 @@ class NeMo(BaseModel):
 
             features = self.net.forward(img, keypoint_positions=kp, obj_mask=1 - obj_mask, do_normalize=True,)
 
-        # import ipdb
-        # ipdb.set_trace()
         if self.training_params.separate_bank:
             get, y_idx, noise_sim = self.memory_bank(
                 features.to(self.ext_gpu), index.to(self.ext_gpu), kpvis.to(self.ext_gpu)
@@ -147,7 +145,7 @@ class NeMo(BaseModel):
 
         get /= self.training_params.T
 
-        kappas={'pos':self.training_params.get('weight_pos', 0), 'near':self.training_params.get('weight_near', 1e5), 'clutter': -math.log(self.training_params.weight_noise)}
+        kappas={'pos': self.training_params.get('weight_pos', 0), 'near': self.training_params.get('weight_near', 1e5), 'clutter': -math.log(self.training_params.weight_noise)}
         # The default manner in VoGE-NeMo
         if self.training_params.remove_near_mode == 'vert':
             vert_ = self.projector.get_verts_recent()  # (B, K, 3)
@@ -242,7 +240,7 @@ class NeMo(BaseModel):
             0 : self.memory_bank.memory.shape[0]
         ].to(self.device)
 
-        image_h, image_w = self.dataset_config.image_sizes[self.cate]
+        image_h, image_w = (self.dataset_config.image_sizes, self.dataset_config.image_sizes)
         # render_image_size = max(image_h, image_w) // self.down_sample_rate
         map_shape = (image_h // self.down_sample_rate, image_w // self.down_sample_rate)
 

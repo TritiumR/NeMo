@@ -13,7 +13,7 @@ except:
     enable_voge=False
 
 def load_off(off_file_name, to_torch=False):
-    file_handle = open(off_file_name)
+    file_handle = open(off_file_name, "r")
     # n_points = int(file_handle.readlines(6)[1].split(' ')[0])
     # all_strings = ''.join(list(islice(file_handle, n_points)))
 

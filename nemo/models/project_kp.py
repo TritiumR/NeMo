@@ -66,7 +66,7 @@ class PackedRaster():
         feature_size = (
         image_size[0] // raster_configs.get('down_rate'), image_size[1] // raster_configs.get('down_rate'))
         cameras = PerspectiveCameras(
-            focal_length=raster_configs.get('focal_length', 3000) / raster_configs.get('down_rate'),
+            focal_length=raster_configs.get('focal_length', 3200) / raster_configs.get('down_rate'),
             principal_point=((feature_size[1] // 2, feature_size[0] // 2,),), image_size=(feature_size,), in_ndc=False,
             device=device)
         self.cameras = cameras
@@ -148,8 +148,8 @@ class PackedRaster():
                 image = phong_renderer(meshes_world=meshes_update.clone(), R=R, T=T)
                 image = image[0, ..., :3].detach().squeeze().cpu().numpy()
 
-            return get_one_standard(self.raster, this_cameras, self.meshes, func_of_mesh=func_single, **kwargs,
-                                    **self.kwargs) + (image,)
+            return get_one_standard(self.raster, this_cameras, self.meshes,  **kwargs,
+                                    **self.kwargs) # + (image,)
         else:
             if kwargs.get('principal', None) is not None:
                 self.render.cameras._N = R.shape[0]
@@ -206,29 +206,26 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
 
     raster.cameras = camera
     frag = raster(mesh_.extend(R.shape[0]) if mesh_._N == 1 else mesh_, R=R, T=T)
-
     true_dist_per_vert = (cam_loc[:, None] - verts_).pow(2).sum(-1).pow(.5)
-    face_dist = torch.gather(true_dist_per_vert[:, None].expand(-1, mesh_.faces_padded().shape[1], -1), dim=2,
-                             index=mesh_.faces_padded().expand(true_dist_per_vert.shape[0], -1, -1))
+    face_dist = torch.gather(true_dist_per_vert[:, None].expand(-1, mesh_.faces_padded().shape[1], -1), dim=2, index=mesh_.faces_padded().expand(true_dist_per_vert.shape[0], -1, -1).clamp(min=0))
+    
+    if func_of_mesh is func_reselect:
+        face_dist = torch.cat([face_dist[i, :mesh_.num_faces_per_mesh()[i]] for i in range(R.shape[0])], dim=0)
 
     # (B, 1, H, W)
     # depth_ = frag.zbuf[..., 0][:, None]
-    depth_ = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_dist.view(-1, 3, 1))[:, :, :, 0, 0][:,
-             None]
+    depth_ = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_dist.view(-1, 3, 1))[:, :, :, 0, 0][:, None]
 
     grid = project_verts[:, None] / torch.Tensor(list(depth_.shape[2:])).to(project_verts.device) * 2 - 1
 
-    sampled_dist_per_vert = torch.nn.functional.grid_sample(depth_, grid.flip(-1), align_corners=False, mode='nearest')[
-                            :, 0, 0, :]
+    sampled_dist_per_vert = torch.nn.functional.grid_sample(depth_, grid.flip(-1), align_corners=False, mode='nearest')[:, 0, 0, :]
 
     vis_mask = torch.abs(sampled_dist_per_vert - true_dist_per_vert) < dist_thr
 
-    # import ipdb
-    # ipdb.set_trace()
 
-    # if isinstance(func_of_mesh, func_reselect):
-    #     for i in range(R.shape[0]):
-    #         vis_mask[i, mesh_._num_verts_per_mesh[i]:] = False
+    if func_of_mesh is func_reselect:
+        for i in range(R.shape[0]):
+            vis_mask[i, mesh_._num_verts_per_mesh[i]:] = False
 
     # import numpy as np
     # import BboxTools as bbt
@@ -248,11 +245,11 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
     # foo(tt, vis_mask).show()
     # import ipdb
     # ipdb.set_trace()
-    if kwargs.get('order', None) is not None:
-        order = kwargs['order']
-        project_verts = project_verts[:, order]
-        vis_mask = vis_mask[:, order]
-        inner_mask = inner_mask[:, order]
+    # if kwargs.get('order', None) is not None:
+    #     order = kwargs['order']
+    #     project_verts = project_verts[:, order]
+    #     vis_mask = vis_mask[:, order]
+    #     inner_mask = inner_mask[:, order]
 
     return project_verts, vis_mask & inner_mask
 

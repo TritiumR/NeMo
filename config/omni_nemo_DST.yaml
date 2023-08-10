@@ -1,5 +1,5 @@
 dataset: config/datasets/DST_shapenet.yaml
-model: config/models/nemo_corr.yaml
+model: config/models/nemo_runtime.yaml
 
 task: correlation_marking
 
