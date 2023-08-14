@@ -52,33 +52,11 @@ def inference_correlation(
         dataloader,
         cached_pred=None
 ):
-    save_pred = {}
-    pose_errors = []
-    running = []
     for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
         if cached_pred is None or True:
-            preds = model.evaluate_corr(sample)
+            _ = model.evaluate_corr(sample)
 
-            for pred, name_ in zip(preds, sample['this_name']):
-                save_pred[str(name_)] = pred
-        else:
-            for name_ in sample['this_name']:
-                save_pred[str(name_)] = cached_pred[str(name_)]
-        for pred in preds:
-            # _err = pose_error(sample, pred["final"][0])
-            _err = pred['pose_error']
-            pose_errors.append(_err)
-            running.append((cate, _err))
-    pose_errors = np.array(pose_errors)
-
-    results = {}
-    results["running"] = running
-    results["pi6_acc"] = np.mean(pose_errors < np.pi / 6)
-    results["pi18_acc"] = np.mean(pose_errors < np.pi / 18)
-    results["med_err"] = np.median(pose_errors) / np.pi * 180.0
-    results["save_pred"] = save_pred
-
-    return results
+    return None
 
 
 def print_3d_pose_estimation(

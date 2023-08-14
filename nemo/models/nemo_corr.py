@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import os
 
 from nemo.models.base_model import BaseModel
 from nemo.models.feature_banks import mask_remove_near, remove_near_vertices_dist
@@ -275,7 +276,7 @@ class NeMo(BaseModel):
             .cpu()
             .numpy()
         )
-        feature_bank = torch.from_numpy(memory)
+        self.feature_bank = torch.from_numpy(memory)
         self.clutter_bank = torch.from_numpy(clutter).to(self.device)
         self.clutter_bank = normalize_features(
             torch.mean(self.clutter_bank, dim=0)
@@ -347,25 +348,49 @@ class NeMo(BaseModel):
     def evaluate_corr(self, sample, debug=False):
         self.net.eval()
 
+        ori_img = sample["img"].numpy()
+        # print('ori_img: ', ori_img.shape)
         sample = self.transforms(sample)
         img = sample["img"].to(self.device)
-        print('img: ', img.shape)
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
-            print('feature_map: ', feature_map.shape)
-        exit(0)
-        if isinstance(preds, dict):
-            preds = [preds]
+        # print('feature_map: ', feature_map.shape)
+        # print('feature_bank: ', self.feature_bank.shape)
+        feature_shape = feature_map.shape[2:]
+        image_shape = ori_img.shape[2:]
 
-        to_print = []
-        for i, pred in enumerate(preds):
-            if "azimuth" in sample and "elevation" in sample and "theta" in sample:
-                pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
-                                                pred["final"][0])
-                # print(pred["pose_error"])
-                to_print.append(pred["pose_error"])
-        print(to_print)
-        return preds
+        point_feature = self.feature_bank[1, :].cuda().view(1, -1, 1, 1)
+        similarity = point_feature * feature_map
+        # print('similarity: ', similarity.shape)
+        similarity = similarity.sum(dim=1)
+        similarity = similarity / torch.norm(point_feature) / torch.norm(feature_map, dim=1)
+        similarity = similarity.view(similarity.shape[0], -1)
+        # print('similarity: ', similarity.shape)
+        max_points = torch.argmax(similarity, dim=1).detach().cpu().numpy()
+        max_sims = torch.max(similarity, dim=1)[0].detach().cpu().numpy()
+        xs, ys = (max_points / feature_shape[0]) / feature_shape[0] * image_shape[0], (max_points % feature_shape[0]) / feature_shape[1] * image_shape[1]
+
+        if not os.path.exists('./visual/Corr'):
+            os.makedirs('./visual/Corr')
+        # print('ori_img[batch_id]: ', ori_img[0].shape)
+        import BboxTools as bbt
+        from PIL import Image, ImageDraw
+        point_size = 3
+        threshold = 0.75
+        for batch_id in range(img.shape[0]):
+            img = Image.fromarray((ori_img[batch_id].transpose(1, 2, 0) * 255).astype(np.uint8))
+            imd = ImageDraw.ImageDraw(img)
+            x, y = xs[batch_id], ys[batch_id]
+            sim = max_sims[batch_id]
+            # print('similarity: ', sim)
+            if sim < threshold:
+                continue
+            # print('x, y: ', x, y)
+            this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img.size[::-1])
+            imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
+            img.save(f'./visual/Corr/sim_{sim}.png')
+
+        return None
 
     def get_ckpt(self, **kwargs):
         ckpt = {}
