@@ -1,7 +1,7 @@
 name: nemo
 class_name: nemo.models.nemo.NeMo
 
-mesh_path: data/PASCAL3D+_release1.1/CAD_single/{:s}/01.off
+mesh_path: data/CAD_single/{:s}/3072.off
 num_noise: 5
 max_group: 512
 down_sample_rate: 8
@@ -42,7 +42,7 @@ inference:
         in_ndc: false
         image_size: -1
         principal_point: -1
-        focal_length: 3000
+        focal_length: 3200
 
     raster_settings:
         class_name: pytorch3d.renderer.RasterizationSettings
