@@ -13,16 +13,21 @@ import os
 
 
 class MeshLoader():
-    def __init__(self, dataset_config, cate='car'):
+    def __init__(self, dataset_config, cate='car', type='train'):
         if cate == 'car':
             self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
             self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
 
+        images_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
         index_path = os.path.join(dataset_config['root_path'], 'index', cate, '4d22bfe3097f63236436916a86a90ed7')
 
         self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
-        self.mesh_name_dict = {t: i for i, t in enumerate(os.listdir(index_path))}
+        self.mesh_name_dict = dict()
+        for name in os.listdir(images_path):
+            if '.' in name or name in self.skip_list:
+                continue
+            self.mesh_name_dict[name] = len(self.mesh_name_dict)
         self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
         self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
@@ -30,8 +35,10 @@ class MeshLoader():
     def get_mesh_listed(self):
         return [t[0].numpy() for t in self.mesh_list], [t[1].numpy() for t in self.mesh_list]
 
-    def get_index_list(self, indexs):
-        return torch.from_numpy(np.array([self.index_list[t] for t in indexs]))
+    def get_index_list(self, indexs=None):
+        if indexs is not None:
+            return torch.from_numpy(np.array([self.index_list[t] for t in indexs]))
+        return torch.from_numpy(np.array(self.index_list))
 
     def get_meshes(self, instance_id, ):
         verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
@@ -160,6 +167,7 @@ class SyntheticShapeNet(Dataset):
         sample['azimuth'] = azimuth
         sample['theta'] = theta
         sample['instance_id'] = instance_id
+        sample['this_name'] = item
         
 
         # if self.data_type == 'train':

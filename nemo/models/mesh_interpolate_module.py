@@ -19,6 +19,7 @@ except:
     enable_voge = False
 
 from pytorch3d.renderer import MeshRasterizer
+from sklearn.neighbors import KDTree
 
 from nemo.utils import (
     forward_interpolate,
@@ -27,6 +28,13 @@ from nemo.utils import (
     vertex_memory_to_face_memory,
     campos_to_R_T,
 )
+
+
+def func_reselect(meshes, indexs, **kwargs):
+    verts_ = [meshes._verts_list[i] for i in indexs]
+    faces_ = [meshes._faces_list[i] for i in indexs]
+    meshes_out = Meshes(verts=verts_, faces=faces_).to(meshes.device)
+    return meshes_out, meshes_out.verts_padded()
 
 
 def MeshInterpolateModule(*args, **kwargs):
@@ -98,8 +106,34 @@ class MeshInterpolateModuleMesh(nn.Module):
         rasterizer,
         post_process=None,
         off_set_mesh=False,
+        interpolate_index=None
     ):
         super().__init__()
+
+        # interpolate features from memory_bank
+        if interpolate_index is not None:
+            interpolate_feature = []
+            for mesh_id in range(len(interpolate_index)):
+                sample_index = interpolate_index[mesh_id]
+                vertex = vertices[mesh_id]
+                sample_vertex = vertex[sample_index]
+                kdtree = KDTree(sample_vertex)
+                dist, nearest_idx = kdtree.query(vertex, k=3)
+                # softmax dist as weight
+                # print('dist: ', dist.shape)
+                dist = torch.from_numpy(dist).to(memory_bank.device) + 1e-2
+                dist = dist.type(torch.float32)
+                weight = torch.softmax(1 / dist, dim=1)
+                # print('weight: ', weight[1])
+                # print('dist: ', dist.shape)
+                # interpolate
+                nearest_feature = [memory_bank[nearest] for nearest in nearest_idx]
+                # print('nearest_feature: ', torch.stack(nearest_feature, dim=0).shape)
+                # print('dist: ', weight.unsqueeze(-1).shape)
+                interpolate_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
+                # print('interpolate_feature: ', interpolate_feature[-1].shape)
+
+            memory_bank = interpolate_feature
 
         # Convert memory features of vertices to faces
         self.faces = faces
@@ -107,21 +141,13 @@ class MeshInterpolateModuleMesh(nn.Module):
         self.update_memory(memory_bank=memory_bank, faces=faces)
 
         # Support multiple meshes at same time
-        if type(vertices) == list:
-            self.n_mesh = len(vertices)
-            # Preprocess convert mesh in PASCAL3d+ standard to Pytorch3D
-            verts = [pre_process_mesh_pascal(t) for t in vertices]
+        self.n_mesh = len(vertices)
+        # # Preprocess convert mesh in PASCAL3d+ standard to Pytorch3D
+        # verts = [pre_process_mesh_pascal(t) for t in vertices]
+        verts = vertices
 
-            # Create Pytorch3D meshes
-            self.meshes = Meshes(verts=verts, faces=faces, textures=None)
-
-        else:
-            self.n_mesh = 1
-            # Preprocess convert meshes in PASCAL3d+ standard to Pytorch3D
-            verts = pre_process_mesh_pascal(vertices)
-
-            # Create Pytorch3D meshes
-            self.meshes = Meshes(verts=[verts], faces=[faces], textures=None)
+        # Create Pytorch3D meshes
+        self.meshes = Meshes(verts=verts, faces=faces, textures=None)
 
         # Device is used during theta to R
         self.rasterizer = rasterizer
@@ -129,24 +155,13 @@ class MeshInterpolateModuleMesh(nn.Module):
         self.off_set_mesh = off_set_mesh
 
     def update_memory(self, memory_bank, faces=None):
-        if type(memory_bank) == list:
-            if faces is None:
-                faces = self.faces
-            # Convert memory features of vertices to faces
-            self.face_memory = torch.cat(
-                [
-                    vertex_memory_to_face_memory(m, f).to(m.device)
-                    for m, f in zip(memory_bank, faces)
-                ],
-                dim=0,
-            )
-        else:
-            if faces is None:
-                faces = self.faces
-            # Convert memory features of vertices to faces
-            self.face_memory = vertex_memory_to_face_memory(memory_bank, faces).to(
-                memory_bank.device
-            )
+        if faces is None:
+            faces = self.faces
+        # Convert memory features of vertices to faces
+        self.face_memory = [
+                vertex_memory_to_face_memory(m, f).to(m.device)
+                for m, f in zip(memory_bank, faces)
+            ]
 
     def to(self, *args, **kwargs):
         if "device" in kwargs.keys():
@@ -155,7 +170,7 @@ class MeshInterpolateModuleMesh(nn.Module):
             device = args[0]
         super().to(device)
         self.rasterizer.cameras = self.rasterizer.cameras.to(device)
-        self.face_memory = self.face_memory.to(device)
+        self.face_memory = [memory.to(device) for memory in self.face_memory]
         self.meshes = self.meshes.to(device)
         return self
 
@@ -167,15 +182,17 @@ class MeshInterpolateModuleMesh(nn.Module):
     def cuda(self, device=None):
         return self.to(torch.device("cuda"))
 
-    def forward(
-        self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", **kwargs
-    ):
+    def forward(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", indexs=None, **kwargs):
         R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
 
-        if self.off_set_mesh:
-            meshes = self.meshes.offset_verts(deform_verts)
+        if indexs is not None:
+            meshes, _ = func_reselect(self.meshes, indexs)
+            face_memory = torch.cat([self.face_memory[idx] for idx in indexs], dim=0)
         else:
             meshes = self.meshes
+            face_memory = torch.cat(self.face_memory, dim=0)
+        if self.off_set_mesh:
+            meshes = self.meshes.offset_verts(deform_verts)
 
         n_cam = campos.shape[0]
         if n_cam > 1 and self.n_mesh > 1:
@@ -183,7 +200,7 @@ class MeshInterpolateModuleMesh(nn.Module):
                 R,
                 T,
                 meshes,
-                self.face_memory,
+                face_memory,
                 rasterizer=self.rasterizer,
                 blur_radius=blur_radius,
                 mode=mode,
@@ -193,7 +210,7 @@ class MeshInterpolateModuleMesh(nn.Module):
                 R,
                 T,
                 meshes.extend(campos.shape[0]),
-                self.face_memory.repeat(campos.shape[0], 1, 1).view(
+                face_memory.repeat(campos.shape[0], 1, 1).view(
                     -1, *self.face_memory.shape[1:]
                 ),
                 rasterizer=self.rasterizer,
@@ -205,12 +222,13 @@ class MeshInterpolateModuleMesh(nn.Module):
                 R,
                 T,
                 meshes,
-                self.face_memory,
+                face_memory,
                 rasterizer=self.rasterizer,
                 blur_radius=blur_radius,
                 mode=mode,
             )
 
+        # print('get: ', get.shape)
         if self.post_process is not None:
             get = self.post_process(get)
         return get

@@ -3,7 +3,7 @@ class_name: nemo.models.nemo_corr.NeMo
 
 num_noise: 5
 max_group: 512
-down_sample_rate: 8
+down_sample_rate: 4
 
 transforms:
     - class_name: nemo.datasets.synthetic_shapenet.Normalize
@@ -16,7 +16,7 @@ training:
     T: 0.07
     proj_mode: runtime_kp
     remove_near_mode: vert
-    distance_thr: 0.03
+    distance_thr: 0.01
 
     optimizer:
         class_name: torch.optim.Adam
@@ -55,7 +55,7 @@ inference:
 
 backbone:
     class_name: nemo.models.keypoint_representation_net.NetE2E
-    net_type: resnetext
+    net_type: resnetext3
     local_size:
         - 1
         - 1

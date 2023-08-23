@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import os
 
 from nemo.models.base_model import BaseModel
 from nemo.models.feature_banks import mask_remove_near, remove_near_vertices_dist
@@ -20,10 +19,8 @@ from nemo.utils import normalize_features
 from nemo.utils import pose_error, iou, pre_process_mesh_pascal, load_off
 from nemo.utils.pascal3d_utils import IMAGE_SIZES
 
-from nemo.datasets.synthetic_shapenet import MeshLoader
-
-from nemo.models.project_kp import PackedRaster, func_reselect, to_tensor
-# from nemo.lib.MeshUtils import *
+from nemo.models.project_kp import PackedRaster
+from nemo.lib.MeshUtils import *
 
 
 class NeMo(BaseModel):
@@ -58,19 +55,21 @@ class NeMo(BaseModel):
         self.num_verts = self.dataset_config.num_verts
         self.visual_kp = cfg.training.visual_kp
         self.visual_mesh = cfg.training.visual_mesh
-        self.folder = cfg.args.checkpoint
-        self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
 
         self.build()
+        proj_mode = self.training_params.proj_mode
 
-        self.raster_conf = {
-            'image_size': (self.dataset_config.image_sizes, self.dataset_config.image_sizes),
-            **self.training_params.kp_projecter
-        }
-        if self.raster_conf['down_rate'] == -1:
-            self.raster_conf['down_rate'] = self.net.module.net_stride
-        self.net.module.kwargs['n_vert'] = self.num_verts
-        self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
+        if proj_mode != 'prepared':
+            self.raster_conf = {
+                'image_size': (self.dataset_config.image_sizes, self.dataset_config.image_sizes),
+                **self.training_params.kp_projecter
+            }
+            if self.raster_conf['down_rate'] == -1:
+                self.raster_conf['down_rate'] = self.net.module.net_stride
+            self.net.module.kwargs['n_vert'] = self.num_verts
+            self.projector = None
+        else:
+            self.projector = None
 
     def build(self):
         if self.mode == "train":
@@ -118,46 +117,80 @@ class NeMo(BaseModel):
 
         img = sample['img'].cuda()
         obj_mask = sample["obj_mask"].cuda()
-        # verts = sample["verts"]
-        # faces = sample["faces"]
-        # order = sample["index"]
-        # verts_len = sample["verts_len"]
-        # faces_len = sample["faces_len"]
+        verts = sample["verts"]
+        faces = sample["faces"]
+        order = sample["index"]
+        verts_len = sample["verts_len"]
+        faces_len = sample["faces_len"]
         # print('img: ', img.shape)
         # print('verts: ', verts.shape)
         # print('verts_len: ', verts_len.shape)
         # print('order: ', order.shape)
 
         index = torch.Tensor([[k for k in range(self.num_verts)]] * img.shape[0]).cuda()
-        mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
 
-        kwargs_ = dict(principal=sample['principal'], func_of_mesh=func_reselect, indexs=mesh_index) if 'principal' in sample.keys() else dict(func_of_mesh=func_reselect, indexs=mesh_index)
-        get_mesh_index = self.mesh_loader.get_index_list(mesh_index).cuda()
+        kp_list = []
+        kpvis_list = []
+        for batch_id in range(img.shape[0]):
+            # print('batch_id: ', batch_id)
+            # print('verts_len: ', verts_len[batch_id])
+            # print('vert: ', verts[batch_id].shape)
+            # print('faces_len: ', faces_len[batch_id])
+            # print('face: ', faces[batch_id].shape)
+            vert = verts[batch_id][:verts_len[batch_id]]
+            face = faces[batch_id][:faces_len[batch_id]]
+            # print('vert: ', vert.shape)
+            # print('face: ', face.shape)
+            verts_features = torch.ones_like(vert)[None]  # (1, V, 3)
+            # print('verts_features: ', verts_features.shape)
+            textures = Textures(verts_features=verts_features.cuda())
+            # print('finish texture')
 
-        with torch.no_grad():
-            kp, kpvis = self.projector(azim=sample['azimuth'].float().cuda(), elev=sample['elevation'].float().cuda(), dist=sample['distance'].float().cuda(), theta=sample['theta'].float().cuda(), **kwargs_)
-            kp = torch.gather(kp, dim=1, index=get_mesh_index[..., None].expand(-1, -1, 2))
-            kpvis = torch.gather(kpvis, dim=1, index=get_mesh_index)
+            mesh = Meshes(
+                verts=[vert.cuda()],
+                faces=[face.cuda()],
+                textures=textures
+            )
 
-        # # angtian debug
-        # import BboxTools as bbt
-        # from PIL import Image, ImageDraw
-        #
-        # def foo(t0, kps, vis_mask_, iidx=0, point_size=3):
-        #     im = Image.fromarray((t0.cpu().numpy()[iidx] * 255).astype(np.uint8)).convert('RGB')
-        #     imd = ImageDraw.ImageDraw(im)
-        #     for k, vv in zip(kps[iidx], vis_mask_[iidx]):
-        #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
-        #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
-        #         break
-        #
-        #     return im
-        # for idx in range(8):
-        #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{idx}.png')
-        #
-        # import ipdb
-        # ipdb.set_trace()
+            projector = PackedRaster(self.raster_conf, mesh, device='cuda')
 
+            kwargs_ = dict(principal=sample['principal']) if 'principal' in sample.keys() else dict()
+            kwargs_['order'] = order[batch_id].cuda()
+            if self.visual_mesh:
+                kwargs_['visual'] = True
+
+            azimuth = sample["azimuth"][batch_id]
+            elevation = sample["elevation"][batch_id]
+            distance = sample["distance"][batch_id]
+            theta = sample["theta"][batch_id]
+
+            with torch.no_grad():
+                kp, kpvis, render_img = projector(azim=azimuth.float().cuda(), elev=elevation.float().cuda(),
+                                   dist=distance.float().cuda(), theta=theta.float().cuda(),
+                                   **kwargs_)
+
+                kp = kp[0]
+                kpvis = kpvis[0]
+                if self.visual_kp:
+                    vis_img = vis_img_batch[batch_id].cpu().numpy().transpose(1, 2, 0).copy()
+                    vis_img = np.ascontiguousarray(vis_img * 255, dtype=np.uint8)
+
+                    if self.visual_mesh:
+                        render_img = np.array((render_img / render_img.max()) * 255).astype(np.uint8)
+                        vis_img = vis_img * 0.3 + render_img * 0.7
+                    vis_id = 2
+                    if kpvis[vis_id] == 1:
+                        vis_img = cv2.circle(vis_img, (int(kp[vis_id][1].item()), int(kp[vis_id][0].item())), 3, (0, 0, 255), -1)
+                    else:
+                        vis_img = cv2.circle(vis_img, (int(kp[vis_id][1].item()), int(kp[vis_id][0].item())), 3, (255, 0, 0), -1)
+                    cv2.imwrite(f'visual/{batch_id}.png', vis_img)
+
+                kp_list.append(kp)
+                kpvis_list.append(kpvis)
+
+        # exit(0)
+        kp = torch.stack(kp_list)
+        kpvis = torch.stack(kpvis_list)
         # print('kp: ', kp.shape)
         # print('kpvis: ', kpvis.shape)
         features = self.net.forward(img, keypoint_positions=kp, obj_mask=1 - obj_mask, do_normalize=True,)
@@ -173,8 +206,8 @@ class NeMo(BaseModel):
         else:
             get, y_idx, noise_sim = self.memory_bank(features, index, kpvis)
 
-        if 'voge' in self.projector.raster_type:
-            kpvis = kpvis > self.projector.kp_vis_thr
+        if 'voge' in projector.raster_type:
+            kpvis = kpvis > projector.kp_vis_thr
 
         get /= self.training_params.T
 
@@ -183,25 +216,23 @@ class NeMo(BaseModel):
                   'clutter': -math.log(self.training_params.weight_noise)}
         # The default manner in VoGE-NeMo
         if self.training_params.remove_near_mode == 'vert':
-            # vert_ = []
-            # for batch_id in range(img.shape[0]):
-            #     vert_.append(verts[batch_id, order[batch_id]])
-            # vert_ = torch.stack(vert_).cuda()
-            with torch.no_grad():
-                verts_ = func_reselect(self.projector.meshes, mesh_index)[1]
-                vert_ = torch.gather(verts_, dim=1, index=get_mesh_index[..., None].expand(-1, -1, 3))
-                # print('vert_: ', vert_.shape)
+            vert_ = []
+            for batch_id in range(img.shape[0]):
+                vert_.append(verts[batch_id, order[batch_id]])
+            vert_ = torch.stack(vert_).cuda()
+            # print('vert_: ', vert_.shape)
 
-                vert_dis = (vert_.unsqueeze(1) - vert_.unsqueeze(2)).pow(2).sum(-1).pow(.5)
+            vert_dis = (vert_.unsqueeze(1) - vert_.unsqueeze(2)).pow(2).sum(-1).pow(.5)
+            # print('vert_dis: ', vert_dis.shape)
 
-                mask_distance_legal = remove_near_vertices_dist(
-                    vert_dis,
-                    thr=self.training_params.distance_thr,
-                    num_neg=self.num_noise * self.max_group,
-                    kappas=kappas,
-                )
-                if mask_distance_legal.shape[0] != get.shape[0]:
-                    mask_distance_legal = mask_distance_legal.expand(get.shape[0], -1, -1).contiguous()
+            mask_distance_legal = remove_near_vertices_dist(
+                vert_dis,
+                thr=self.training_params.distance_thr,
+                num_neg=self.num_noise * self.max_group,
+                kappas=kappas,
+            )
+            if mask_distance_legal.shape[0] != get.shape[0]:
+                mask_distance_legal = mask_distance_legal.expand(get.shape[0], -1, -1).contiguous()
         # The default manner in original-NeMo
         else:
             mask_distance_legal = mask_remove_near(
@@ -240,7 +271,7 @@ class NeMo(BaseModel):
         self.loss_trackers['loss_main'].append(loss_main.item())
         self.loss_trackers['loss_reg'].append(loss_reg.item())
 
-        # print('loss: ', loss.item())
+        print('loss: ', loss.item())
 
         return {'loss': loss.item(), 'loss_main': loss_main.item(), 'loss_reg': loss_reg.item()}
 
@@ -272,7 +303,7 @@ class NeMo(BaseModel):
             .cpu()
             .numpy()
         )
-        self.feature_bank = torch.from_numpy(memory)
+        feature_bank = torch.from_numpy(memory)
         self.clutter_bank = torch.from_numpy(clutter).to(self.device)
         self.clutter_bank = normalize_features(
             torch.mean(self.clutter_bank, dim=0)
@@ -281,97 +312,11 @@ class NeMo(BaseModel):
                            0: self.memory_bank.memory.shape[0]
                            ].to(self.device)
 
-        image_h, image_w = (self.dataset_config.image_sizes, self.dataset_config.image_sizes)
-        map_shape = (image_h // self.down_sample_rate, image_w // self.down_sample_rate)
-
-        if self.inference_params.cameras.get('image_size', 0) == -1:
-            self.inference_params.cameras['image_size'] = (map_shape, )
-        if self.inference_params.cameras.get('principal_point', 0) == -1:
-            self.inference_params.cameras['principal_point'] = ((map_shape[1] // 2, map_shape[0] // 2), )
-            print('principal_point: ', self.inference_params.cameras['principal_point'])
-        if self.inference_params.cameras.get('focal_length', None) is not None:
-            self.inference_params.cameras['focal_length'] = self.inference_params.cameras['focal_length'] / self.down_sample_rate
-            print('focal_length: ', self.inference_params.cameras['focal_length'])
-
-        cameras = construct_class_by_name(**self.inference_params.cameras, device=self.device)
-        raster_settings = construct_class_by_name(
-            **self.inference_params.raster_settings, image_size=map_shape
-        )
-        if self.inference_params.rasterizer.class_name == 'VoGE.Renderer.GaussianRenderer':
-            rasterizer = construct_class_by_name(
-                **self.inference_params.rasterizer, cameras=cameras, render_settings=raster_settings
-            )
-        else:
-            rasterizer = construct_class_by_name(
-                **self.inference_params.rasterizer, cameras=cameras, raster_settings=raster_settings
-            )
-
-        xvert = to_tensor(self.mesh_loader.get_mesh_listed()[0])
-        xface = to_tensor(self.mesh_loader.get_mesh_listed()[1])
-        get_mesh_index = self.mesh_loader.get_index_list().cuda()
-        # print('xvert: ', len(xvert))
-        # print('xface: ', len(xface))
-        # print(xvert[0])
-        # print(xface[0])
-        # print('xvert: ', xvert.shape)
-        # print('xface: ', xface.shape)
-        self.inter_module = MeshInterpolateModule(
-            xvert,
-            xface,
-            self.feature_bank,
-            rasterizer=rasterizer,
-            post_process=None,
-            interpolate_index=get_mesh_index
-        ).to(self.device)
-
-        (azimuth_samples,
-            elevation_samples,
-            theta_samples,
-            distance_samples,
-            px_samples,
-            py_samples,
-        ) = get_param_samples(self.cfg)
-
-        self.init_mode = self.cfg.inference.get('init_mode', '3d_batch')
-
-        if 'batch' in self.init_mode:
-            dof = int(self.init_mode.split('d_')[0])
-            self.feature_pre_rendered, self.cam_pos_pre_rendered, self.theta_pre_rendered = get_pre_render_samples(
-                self.inter_module,
-                azum_samples=azimuth_samples,
-                elev_samples=elevation_samples,
-                theta_samples=theta_samples,
-                distance_samples=distance_samples,
-                device=self.device
-            )
-            if dof == 3:
-                assert distance_samples.shape[0] == 1
-                self.record_distance = distance_samples[0]
-            if dof == 6:
-                self.samples_principal = torch.stack(
-                    (torch.from_numpy(px_samples).view(-1, 1).expand(-1, py_samples.shape[0]) * map_shape[1],
-                     torch.from_numpy(py_samples).view(1, -1).expand(px_samples.shape[0], -1) * map_shape[0])).view(2, -1).T.to(self.device)
-
-        else:
-            self.poses, self.kp_coords, self.kp_vis = pre_compute_kp_coords(
-                self.mesh_path,
-                azimuth_samples=azimuth_samples,
-                elevation_samples=elevation_samples,
-                theta_samples=theta_samples,
-                distance_samples=distance_samples,
-            )
-
-        print('build inference done')
-
     def evaluate(self, sample, debug=False):
         self.net.eval()
 
-        img = sample['img'].cuda()
-
-        mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
-
-        kwargs_ = dict(indexs=mesh_index)
-
+        sample = self.transforms(sample)
+        img = sample["img"].to(self.device)
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
         if 'batch' in self.init_mode:
@@ -398,8 +343,7 @@ class NeMo(BaseModel):
                 distance_target=self.record_distance * torch.ones(feature_map.shape[0]).to(
                     feature_map.device) if dof == 3 else torch.ones(feature_map.shape[0]).to(feature_map.device),
                 pre_render=self.cfg.inference.get('pre_render', True),
-                dof=dof,
-                **kwargs_
+                dof=dof
             )
         else:
             assert len(img) == 1, "The batch size during validation should be 1"
@@ -414,68 +358,42 @@ class NeMo(BaseModel):
                 self.kp_vis,
                 debug=debug,
                 device=self.device,
-                **kwargs_
             )
         if isinstance(preds, dict):
             preds = [preds]
 
-        # to_print = []
+        to_print = []
         for i, pred in enumerate(preds):
             if "azimuth" in sample and "elevation" in sample and "theta" in sample:
                 pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
                                                 pred["final"][0])
                 # print(pred["pose_error"])
-                # to_print.append(pred["pose_error"])
-        # print(to_print)
+                to_print.append(pred["pose_error"])
+        print(to_print)
         return preds
 
     def evaluate_corr(self, sample, debug=False):
         self.net.eval()
 
-        ori_img = sample["img"].numpy()
-        # print('ori_img: ', ori_img.shape)
         sample = self.transforms(sample)
         img = sample["img"].to(self.device)
+        print('img: ', img.shape)
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
-        # print('feature_map: ', feature_map.shape)
-        # print('feature_bank: ', self.feature_bank.shape)
-        feature_shape = feature_map.shape[2:]
-        image_shape = ori_img.shape[2:]
+            print('feature_map: ', feature_map.shape)
+        exit(0)
+        if isinstance(preds, dict):
+            preds = [preds]
 
-        for selected_point in range(2000, 2020):
-            point_feature = self.feature_bank[selected_point, :].cuda().view(1, -1, 1, 1)
-            similarity = point_feature * feature_map
-            # print('similarity: ', similarity.shape)
-            similarity = similarity.sum(dim=1)
-            similarity = similarity / torch.norm(point_feature) / torch.norm(feature_map, dim=1)
-            similarity = similarity.view(similarity.shape[0], -1)
-            # print('similarity: ', similarity.shape)
-            max_points = torch.argmax(similarity, dim=1).detach().cpu().numpy()
-            max_sims = torch.max(similarity, dim=1)[0].detach().cpu().numpy()
-            xs, ys = (max_points / feature_shape[0]) / feature_shape[0] * image_shape[0], (max_points % feature_shape[0]) / feature_shape[1] * image_shape[1]
-
-            if not os.path.exists(f'./visual/Corr/{self.folder}/{selected_point}'):
-                os.makedirs(f'./visual/Corr/{self.folder}/{selected_point}')
-            # print('ori_img[batch_id]: ', ori_img[0].shape)
-            import BboxTools as bbt
-            from PIL import Image, ImageDraw
-            point_size = 3
-            threshold = 0.75
-            for batch_id in range(img.shape[0]):
-                img_ = Image.fromarray((ori_img[batch_id].transpose(1, 2, 0) * 255).astype(np.uint8))
-                imd = ImageDraw.ImageDraw(img_)
-                x, y = xs[batch_id], ys[batch_id]
-                sim = max_sims[batch_id]
-                # print('similarity: ', sim)
-                if sim < threshold:
-                    continue
-                # print('x, y: ', x, y)
-                this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img_.size[::-1])
-                imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
-                img_.save(f'./visual/Corr/{self.folder}/{selected_point}/_sim_{sim}.png')
-
-        return None
+        to_print = []
+        for i, pred in enumerate(preds):
+            if "azimuth" in sample and "elevation" in sample and "theta" in sample:
+                pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
+                                                pred["final"][0])
+                # print(pred["pose_error"])
+                to_print.append(pred["pose_error"])
+        print(to_print)
+        return preds
 
     def get_ckpt(self, **kwargs):
         ckpt = {}

@@ -45,6 +45,7 @@ def get_pre_render_samples(inter_module, azum_samples, elev_samples, theta_sampl
             C = camera_position_from_spherical_angles(sample_[3], sample_[1], sample_[0], degrees=False, device=device)
 
             projected_map = inter_module(C, theta_)
+            # print('projected_map.shape: ', projected_map.shape)
             out_maps.append(projected_map)
             get_c.append(C.detach())
             get_theta.append(theta_)
@@ -127,7 +128,13 @@ def get_init_pos_rendered_dim0(samples_maps, samples_pos, samples_theta, predict
     predicted_map: [b, c, h, w]
     clutter_score: [b, h, w]
     """
-    n = samples_maps.shape[0]
+    # n = samples_maps.shape[0]
+    # print('n: ', n)
+    # print('samples_maps.shape: ', samples_maps.shape)
+    # print('samples_pos.shape: ', samples_pos.shape)
+    # print('samples_theta.shape: ', samples_theta.shape)
+    # print('predicted_maps.shape: ', predicted_maps.shape)
+    # print('clutter_scores.shape: ', clutter_scores.shape)
     if clutter_scores is None:
         def cal_sim(projected_map, predicted_map, clutter_map):
             object_score = torch.einsum('nchw,chw->nhw', projected_map, predicted_map)
@@ -146,7 +153,7 @@ def get_init_pos_rendered_dim0(samples_maps, samples_pos, samples_theta, predict
 
         for i in range(predicted_maps.shape[0]):
             # [n]
-            get_loss.append(batchifier(cal_sim)(projected_map=samples_maps.squeeze(1), predicted_map=predicted_maps[i], clutter_map=clutter_scores[None, i]))
+            get_loss.append(batchifier(cal_sim)(projected_map=samples_maps[:, i], predicted_map=predicted_maps[i], clutter_map=clutter_scores[None, i]))
 
         # b * [n, ] -> [n, b]
         get_loss = torch.stack(get_loss).T
@@ -239,7 +246,10 @@ def solve_pose(
             t_clutter_score = clutter_score
 
         if pre_render:
-            init_C, init_theta, _ = get_init_pos_rendered_dim0(samples_maps=feature_pre_rendered, 
+            if 'indexs' in kwargs.keys():
+                feature_pre_rendered = feature_pre_rendered[:, kwargs['indexs']]
+                # print('feature_pre_rendered.shape: ', feature_pre_rendered.shape)
+            init_C, init_theta, _ = get_init_pos_rendered_dim0(samples_maps=feature_pre_rendered,
                                                     samples_pos=cam_pos_pre_rendered, 
                                                     samples_theta=theta_pre_rendered, 
                                                     predicted_maps=t_feature_map, 
@@ -307,7 +317,7 @@ def solve_pose(
 
     scheduler_kwargs = {"optimizer": optim}
     scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
-    
+
     for epo in range(cfg.inference.epochs):
         # [b, c, h, w]
         projected_map = inter_module(
@@ -315,6 +325,7 @@ def solve_pose(
             theta,
             mode=cfg.inference.inter_mode,
             blur_radius=cfg.inference.blur_radius,
+            indexs=kwargs.get('indexs', None)
         )
 
         # [b, c, h, w] -> [b, h, w]
@@ -341,7 +352,10 @@ def solve_pose(
             elevation_preds[i].item(),
             azimuth_preds[i].item(),
         )
-        this_principal = principals[i]
+        if len(principals) == 1:
+            this_principal = principals[0]
+        else:
+            this_principal = principals[i]
         with torch.no_grad():
             this_loss = loss_fg_bg(object_score[i, None], clutter_score[i, None], )
         refined = [{

@@ -121,7 +121,7 @@ def capsule_decompose(pc, R=None, T=None):
 
 
 if config.cat_type == 'car':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/car'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/car'
     recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
     ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
     save_path = '../data/ShapeNet/Preprocess/car'
@@ -155,7 +155,11 @@ np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
 
 # decompose using point cloud
 v = verts
-prev_idx = np.random.choice(len(v), config.num_pts, replace=False)
+if os.path.exists(os.path.join(save_path, f'{chosen_instance}', 'index.npy')):
+    prev_idx = np.load(os.path.join(save_path, f'{chosen_instance}', 'index.npy'), allow_pickle=True)[()]
+    print('yes')
+else:
+    prev_idx = np.random.choice(len(v), config.num_pts, replace=False)
 prev_x = torch.from_numpy(v[prev_idx]).to(device, dtype=torch.float32)
 R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
                        [-0.9333, 0.2898, 0.2122],
@@ -186,7 +190,7 @@ for instance_id in instance_ids:
     vert_middle = (ori_verts.max(dim=0)[0] + ori_verts.min(dim=0)[0]) / 2 * vert_scale
     # ori_scale = ((ori_verts.max(dim=0)[0] - ori_verts.min(dim=0)[0]) ** 2).sum() ** 0.5
     # print('ori_scale: ', ori_scale)
-    np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
+    # np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
 
     # decompose using point cloud
     v = verts

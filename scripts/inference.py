@@ -33,11 +33,11 @@ def inference(cfg):
 
     running_results = []
     for cate in all_categories:
-        dataset_kwargs = {"data_type": "val", "category": cate}
+        dataset_kwargs = {"data_type": "test", "category": cate}
         val_dataset = construct_class_by_name(**cfg.dataset, **dataset_kwargs)
 
         val_dataloader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=cfg.inference.get('batch_size', 1), shuffle=False, num_workers=4
+            val_dataset, batch_size=cfg.inference.get('batch_size', 1), shuffle=True, num_workers=4
         )
         logging.info(f"Number of inference images: {len(val_dataset)}")
 
@@ -70,6 +70,8 @@ def inference(cfg):
                 model,
                 val_dataloader,
             )
+            if results is None:
+                continue
             torch.save(results["save_pred"], save_pred_path)
 
         running_results += results['running']
@@ -80,7 +82,8 @@ def inference(cfg):
             helper_func_by_task[cfg.task+'_visualize'](
                 cfg, cate, val_dataloader, results["save_pred"], _save_path)
 
-    helper_func_by_task[cfg.task+'_print'](cfg, all_categories, running_results)
+    if cfg.task != 'correlation_marking':
+        helper_func_by_task[cfg.task + '_print'](cfg, all_categories, running_results)
 
 
 def main():

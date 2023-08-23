@@ -1,5 +1,5 @@
 import sys
-sys.path.append('../code/lib')
+sys.path.append('../nemo/lib')
 import torch
 import numpy as np
 import os
@@ -91,23 +91,17 @@ for instance_id in instance_ids:
         #     continue
         anno = np.load(anno_fn, allow_pickle=True).item()
         distance = anno['dist']
+        # print('distance: ', distance)
         elevation = np.pi / 2 - anno['phi']
         azimuth = anno['theta'] + np.pi / 2
         camera_rotation = anno['camera_rotation']
-        # offset = anno['rendering_offset']
-        # offset = np.array([offset[1], offset[2], offset[0]])
         offset = - vert_middle.cpu().numpy() / 2
-        # if count_id == '090':
-        # print(anno)
 
         meshes_update = meshes
         meshes_update = meshes_update.update_padded(meshes.verts_padded() + torch.from_numpy(offset).to(device).float())
-        # print(meshes_update.verts_padded().max(dim=1)[0], meshes_update.verts_padded().min(dim=1)[0])
 
         R, T = look_at_view_transform(distance, elevation, azimuth, device=device, degrees=False)
         R = torch.bmm(R, rotation_theta(float(camera_rotation), device_=device))
-        # offset_new = np.array([1, 0, 0.])
-        # T += torch.from_numpy(offset).to(device).float()
 
         image = phong_renderer(meshes_world=meshes_update.clone(), R=R, T=T)
         image = image[0, ..., :3].detach().squeeze().cpu().numpy()
