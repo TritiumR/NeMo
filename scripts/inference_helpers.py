@@ -35,7 +35,7 @@ def inference_3d_pose_estimation(
             _err = pred['pose_error']
             print('pi6_acc: ', np.mean(np.array(_err) < np.pi / 6), 'pi18_acc: ', np.mean(np.array(_err) < np.pi / 18), 'med_err: ', np.median(np.array(_err)) / np.pi * 180.0)
             if np.mean(np.array(_err) < np.pi / 6) < 0.5:
-                image_ori = sample['img_ori'][idx].cpu().numpy()
+                image_ori = sample['img_ori'][idx].cpu().numpy().transpose(1, 2, 0)
                 image_ori = (image_ori * 255).astype(np.uint8)
                 image_ori = Image.fromarray(image_ori)
                 if not os.path.exists('./visual/failure'):
