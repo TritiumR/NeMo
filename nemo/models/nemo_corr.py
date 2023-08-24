@@ -58,9 +58,14 @@ class NeMo(BaseModel):
         self.num_verts = self.dataset_config.num_verts
         self.visual_kp = cfg.training.visual_kp
         self.visual_mesh = cfg.training.visual_mesh
+        self.visual_pose = cfg.inference.visual_pose
         self.folder = cfg.args.checkpoint
-        self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
 
+        if cfg.task == 'correlation_marking':
+            self.build()
+            return
+
+        self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
         self.build()
 
         self.raster_conf = {
@@ -281,6 +286,9 @@ class NeMo(BaseModel):
                            0: self.memory_bank.memory.shape[0]
                            ].to(self.device)
 
+        if self.cfg.task == 'correlation_marking':
+            return
+
         image_h, image_w = (self.dataset_config.image_sizes, self.dataset_config.image_sizes)
         map_shape = (image_h // self.down_sample_rate, image_w // self.down_sample_rate)
 
@@ -419,49 +427,48 @@ class NeMo(BaseModel):
         if isinstance(preds, dict):
             preds = [preds]
 
-        # to_print = []
+        print('preds: ', len(preds))
         for i, pred in enumerate(preds):
             if "azimuth" in sample and "elevation" in sample and "theta" in sample:
                 pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
                                                 pred["final"][0])
-                # print(pred["pose_error"])
-                # to_print.append(pred["pose_error"])
-        # print(to_print)
+        if self.visual_pose:
+            for idx in range(len(img)):
+                self.projector.visual_pose(mesh_index[idx], sample['img_ori'][idx], preds[idx]["final"][0],
+                                           self.folder, preds[idx]["pose_error"])
+
         return preds
 
     def evaluate_corr(self, sample, debug=False):
         self.net.eval()
 
         ori_img = sample["img"].numpy()
-        # print('ori_img: ', ori_img.shape)
         sample = self.transforms(sample)
         img = sample["img"].to(self.device)
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
-        # print('feature_map: ', feature_map.shape)
-        # print('feature_bank: ', self.feature_bank.shape)
+        print('feature_map: ', feature_map.shape)
         feature_shape = feature_map.shape[2:]
         image_shape = ori_img.shape[2:]
 
-        for selected_point in range(2000, 2020):
+        for selected_point in range(0, 10):
             point_feature = self.feature_bank[selected_point, :].cuda().view(1, -1, 1, 1)
             similarity = point_feature * feature_map
-            # print('similarity: ', similarity.shape)
             similarity = similarity.sum(dim=1)
             similarity = similarity / torch.norm(point_feature) / torch.norm(feature_map, dim=1)
             similarity = similarity.view(similarity.shape[0], -1)
-            # print('similarity: ', similarity.shape)
             max_points = torch.argmax(similarity, dim=1).detach().cpu().numpy()
             max_sims = torch.max(similarity, dim=1)[0].detach().cpu().numpy()
-            xs, ys = (max_points / feature_shape[0]) / feature_shape[0] * image_shape[0], (max_points % feature_shape[0]) / feature_shape[1] * image_shape[1]
+            xs, ys = (max_points / feature_shape[1]) / feature_shape[1] * image_shape[1], (max_points % feature_shape[1]) / feature_shape[0] * image_shape[0]
 
-            if not os.path.exists(f'./visual/Corr/{self.folder}/{selected_point}'):
-                os.makedirs(f'./visual/Corr/{self.folder}/{selected_point}')
+            saved_path = self.folder.split('/')[1] + '/' + self.folder.split('/')[3]
+            if not os.path.exists(f'./visual/Corr/{saved_path}/{selected_point}'):
+                os.makedirs(f'./visual/Corr/{saved_path}/{selected_point}')
             # print('ori_img[batch_id]: ', ori_img[0].shape)
             import BboxTools as bbt
             from PIL import Image, ImageDraw
             point_size = 3
-            threshold = 0.75
+            threshold = 0.85
             for batch_id in range(img.shape[0]):
                 img_ = Image.fromarray((ori_img[batch_id].transpose(1, 2, 0) * 255).astype(np.uint8))
                 imd = ImageDraw.ImageDraw(img_)
@@ -473,7 +480,7 @@ class NeMo(BaseModel):
                 # print('x, y: ', x, y)
                 this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img_.size[::-1])
                 imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
-                img_.save(f'./visual/Corr/{self.folder}/{selected_point}/_sim_{sim}.png')
+                img_.save(f'./visual/Corr/{saved_path}/{selected_point}/sim_{sim}.png')
 
         return None
 

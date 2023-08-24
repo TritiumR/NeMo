@@ -121,6 +121,7 @@ class SyntheticShapeNet(Dataset):
 
     def __getitem__(self, item):
         ori_img = cv2.imread(self.img_fns[item], cv2.IMREAD_UNCHANGED)
+        ori_img = cv2.cvtColor(ori_img, cv2.COLOR_BGR2RGB)
         render_img = cv2.imread(self.render_img_fns[item], cv2.IMREAD_UNCHANGED)
         # ori_img = Image.open(self.img_fns[item]).convert('RGBA')
         ori_img = np.array(ori_img)

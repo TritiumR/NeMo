@@ -1,10 +1,10 @@
-dataset: config/datasets/DST_shapenet.yaml
+dataset: config/datasets/pascal3d.yaml
 model: config/models/nemo_corr.yaml
 
-task: 3d_pose_estimation
+task: correlation_marking
 
 training:
-    batch_size: 10
+    batch_size: 30
     workers: 8
     total_epochs: 1000
     log_interval: 1
@@ -17,11 +17,10 @@ training:
 inference:
     init_mode: 3d_batch
     loss: nemo.models.solve_pose.loss_fg_bg
-    batch_size: 5 # set to 20 for 24GB vmem
+    batch_size: 20 # set to 20 for 24GB vmem
 
     search_translation: false
     optimize_translation: false
-    visual_pose: False
 
     px_sample:
         min: 0.0
@@ -44,8 +43,8 @@ inference:
         max_pi: 0.1667
         num: 3
     dist_sample:
-        min: 5.491
-        max: 5.491
+        min: 4.0
+        max: 6.0
         num: 1
 
     min_distance: 2

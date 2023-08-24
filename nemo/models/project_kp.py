@@ -1,10 +1,13 @@
 import torch
+import numpy as np
 from pytorch3d.renderer import RasterizationSettings, MeshRasterizer, PerspectiveCameras, look_at_view_transform, \
     camera_position_from_spherical_angles, PointLights, MeshRenderer, HardPhongShader
 from nemo.utils import rotation_theta
 from pytorch3d.structures import Meshes
 from pytorch3d.ops.interp_face_attrs import interpolate_face_attributes
-
+from pytorch3d.renderer import TexturesVertex as Textures
+import os
+from PIL import Image
 # if True:
 try:
     from VoGE.Renderer import GaussianRenderSettings, GaussianRenderer
@@ -177,6 +180,64 @@ class PackedRaster():
                 ind += 1
                 get_weight = ind_fill(get_weight, ind, frag.vert_weight, dim=3)
                 return get_weight[..., 1:]
+
+    def visual_pose(self, mesh_idx, img, pose, folder, error):
+        render_image_size = (512, 512)
+
+        mesh, _ = func_reselect(self.meshes, [mesh_idx])
+
+        verts_features = torch.ones_like(mesh.verts_padded())  # (1, V, 3)
+        textures = Textures(verts_features=verts_features.to(self.cameras.device))
+
+        mesh = Meshes(verts=mesh.verts_padded(), faces=mesh.faces_padded(), textures=textures).to(self.cameras.device)
+
+        raster_settings = RasterizationSettings(
+            image_size=render_image_size,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+            bin_size=0
+        )
+        # We can add a point light in front of the object.
+        lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
+
+        # prepare camera
+        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+                                     principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+                                     image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+
+        phong_renderer = MeshRenderer(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=raster_settings
+            ),
+            shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
+        )
+
+        distance = pose['distance']
+        elevation = pose['elevation']
+        azimuth = pose['azimuth']
+        theta = pose['theta']
+
+        R, T = look_at_view_transform(distance, elevation, azimuth, device=self.cameras.device, degrees=False)
+        R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
+
+        image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
+        image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+
+        img = img.permute(1, 2, 0).numpy()
+
+        # print('image: ', image.shape)
+        # print('img: ', img.shape)
+        # print('image: ', image.max(), image.min())
+        # print('img: ', img.max(), img.min())
+
+        saved_path = './visual/Pose/' + folder.split('/')[1] + '/' + folder.split('/')[3]
+        if not os.path.exists(saved_path):
+            os.makedirs(saved_path)
+
+        mixed_image = ((image * 0.6 + img * 0.4) * 255).astype(np.uint8)
+        mixed_image = Image.fromarray(mixed_image)
+        mixed_image.save(os.path.join(saved_path, f'error{np.array(error).mean():.4f}.jpg'))
 
 
 def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3,
