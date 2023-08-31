@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 try:
     from pytorch3d.structures import Meshes
@@ -113,25 +114,35 @@ class MeshInterpolateModuleMesh(nn.Module):
         # interpolate features from memory_bank
         if interpolate_index is not None:
             interpolate_feature = []
-            for mesh_id in range(len(interpolate_index)):
-                sample_index = interpolate_index[mesh_id]
-                vertex = vertices[mesh_id]
-                sample_vertex = vertex[sample_index]
-                kdtree = KDTree(sample_vertex)
-                dist, nearest_idx = kdtree.query(vertex, k=3)
-                # softmax dist as weight
-                # print('dist: ', dist.shape)
-                dist = torch.from_numpy(dist).to(memory_bank.device) + 1e-2
-                dist = dist.type(torch.float32)
-                weight = torch.softmax(1 / dist, dim=1)
-                # print('weight: ', weight[1])
-                # print('dist: ', dist.shape)
-                # interpolate
-                nearest_feature = [memory_bank[nearest] for nearest in nearest_idx]
-                # print('nearest_feature: ', torch.stack(nearest_feature, dim=0).shape)
-                # print('dist: ', weight.unsqueeze(-1).shape)
-                interpolate_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
-                # print('interpolate_feature: ', interpolate_feature[-1].shape)
+
+            if isinstance(interpolate_index[0], tuple):
+                for part_id in range(len(interpolate_index)):
+                    dist = np.array(interpolate_index[part_id][0])
+                    dist = torch.from_numpy(dist).to(memory_bank.device) + 1e-4
+                    weight = torch.softmax(1 / dist, dim=0)
+                    nearest_feature = [memory_bank[nearest] for nearest in interpolate_index[part_id][1]]
+                    interpolate_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
+                    # print('interpolate_feature: ', interpolate_feature[-1].shape)
+            else:
+                for mesh_id in range(len(interpolate_index)):
+                    sample_index = interpolate_index[mesh_id]
+                    vertex = vertices[mesh_id]
+                    sample_vertex = vertex[sample_index]
+                    kdtree = KDTree(sample_vertex)
+                    dist, nearest_idx = kdtree.query(vertex, k=3)
+                    # softmax dist as weight
+                    # print('dist: ', dist.shape)
+                    dist = torch.from_numpy(dist).to(memory_bank.device) + 1e-4
+                    dist = dist.type(torch.float32)
+                    weight = torch.softmax(1 / dist, dim=1)
+                    # print('weight: ', weight[1])
+                    # print('dist: ', dist.shape)
+                    # interpolate
+                    nearest_feature = [memory_bank[nearest] for nearest in nearest_idx]
+                    # print('nearest_feature: ', torch.stack(nearest_feature, dim=0).shape)
+                    # print('dist: ', weight.unsqueeze(-1).shape)
+                    interpolate_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
+                    # print('interpolate_feature: ', interpolate_feature[-1].shape)
 
             memory_bank = interpolate_feature
 

@@ -57,7 +57,6 @@ for instance_id in instance_ids:
         os.makedirs(instance_path)
     # load mesh
     mesh_fn = os.path.join(meshs_path, instance_id, 'models', 'model_normalized.obj')
-    # print(mesh_fn)
 
     verts, faces_idx, _ = load_obj(mesh_fn, device=device)
     # print(verts.shape)
@@ -81,17 +80,12 @@ for instance_id in instance_ids:
     print('image number: ', len(img_fns))
     for idx, img_fn in enumerate(img_fns):
         img = np.array(Image.open(os.path.join(img_path, img_fn)))
-        # print('shape: ', np.array(img).shape)
-        # img = trans(img)
 
         count_id = img_fn[:-7]
         anno_fn = os.path.join(annos_path, instance_id, count_id + '.npy')
         print(anno_fn)
-        # if not os.path.exists(anno_fn):
-        #     continue
         anno = np.load(anno_fn, allow_pickle=True).item()
         distance = anno['dist']
-        # print('distance: ', distance)
         elevation = np.pi / 2 - anno['phi']
         azimuth = anno['theta'] + np.pi / 2
         camera_rotation = anno['camera_rotation']
@@ -107,19 +101,6 @@ for instance_id in instance_ids:
         image = image[0, ..., :3].detach().squeeze().cpu().numpy()
 
         image = np.array((image / image.max()) * 255).astype(np.uint8)
-        # image = Image.fromarray(image)
-        # image.rotate(camera_rotation / np.pi * 180, expand=True)
-        # image = np.array(image).astype(np.uint8)
-        # print('render shape: ', image.shape)
-
-        # crop_box = bbt.box_by_shape(image_size, (render_image_size[0] // 2, render_image_size[1] // 2),
-        #                             image_boundary=render_image_size)
-
-        # image = crop_box.apply(image)
 
         mixed_image = (image * 0.6 + img * 0.4).astype(np.uint8)
-        # Image.fromarray(mixed_image).save(os.path.join(instance_path, f'{idx}_{offset[0]}_{offset[1]}_{offset[2]}.jpg'))
         Image.fromarray(mixed_image).save(os.path.join(instance_path, f'{idx}.jpg'))
-
-    # exit(0)
-

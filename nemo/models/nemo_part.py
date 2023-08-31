@@ -20,7 +20,7 @@ from nemo.utils import normalize_features
 from nemo.utils import pose_error, iou, pre_process_mesh_pascal, load_off
 from nemo.utils.pascal3d_utils import IMAGE_SIZES
 
-from nemo.datasets.synthetic_shapenet import MeshLoader
+from nemo.datasets.synthetic_shapenet import MeshLoader, PartLoader
 
 from nemo.models.project_kp import PackedRaster, func_reselect, to_tensor
 # from nemo.lib.MeshUtils import *
@@ -60,13 +60,15 @@ class NeMo(BaseModel):
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
         self.folder = cfg.args.checkpoint
-        self.avg_mesh = cfg.inference.avg_mesh
 
         if cfg.task == 'correlation_marking':
             self.build()
             return
 
+        self.part_loader = PartLoader(self.dataset_config, cate=cate)
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
+        verts, faces = self.mesh_loader.get_meshes('4d22bfe3097f63236436916a86a90ed7')
+        self.whole_mesh = ([verts.numpy()], [faces.numpy()])
         self.build()
 
         self.raster_conf = {
@@ -76,7 +78,8 @@ class NeMo(BaseModel):
         if self.raster_conf['down_rate'] == -1:
             self.raster_conf['down_rate'] = self.net.module.net_stride
         self.net.module.kwargs['n_vert'] = self.num_verts
-        self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
+        self.projector = PackedRaster(self.raster_conf, self.whole_mesh, device='cuda')
+        self.part_projector = PackedRaster(self.raster_conf, self.part_loader.get_part_mesh(), device='cuda')
 
     def build(self):
         if self.mode == "train":
@@ -315,9 +318,18 @@ class NeMo(BaseModel):
                 **self.inference_params.rasterizer, cameras=cameras, raster_settings=raster_settings
             )
 
-        xvert = to_tensor(self.mesh_loader.get_mesh_listed()[0])
-        xface = to_tensor(self.mesh_loader.get_mesh_listed()[1])
-        get_mesh_index = self.mesh_loader.get_index_list().cuda()
+        xvert = to_tensor(self.part_loader.get_part_mesh()[0])
+        xface = to_tensor(self.part_loader.get_part_mesh()[1])
+        get_vert_weight = self.part_loader.get_weight()
+
+        self.parts_feature = []
+        for part_id, name in enumerate(self.part_loader.get_name_listed()):
+            part_index = self.part_loader.get_weight()[part_id]
+            dist = np.array(part_index[0])
+            dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
+            weight = torch.softmax(1 / dist, dim=0)
+            nearest_feature = [self.feature_bank[nearest] for nearest in part_index[1]]
+            self.parts_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
         # print('xvert: ', len(xvert))
         # print('xface: ', len(xface))
         # print(xvert[0])
@@ -330,8 +342,11 @@ class NeMo(BaseModel):
             self.feature_bank,
             rasterizer=rasterizer,
             post_process=None,
-            interpolate_index=get_mesh_index
+            interpolate_index=get_vert_weight,
         ).to(self.device)
+
+        if self.cfg.task == 'part_locate':
+            return
 
         (azimuth_samples,
             elevation_samples,
@@ -377,10 +392,7 @@ class NeMo(BaseModel):
 
         img = sample['img'].cuda()
 
-        if self.avg_mesh:
-            mesh_index = [self.mesh_loader.mesh_name_dict['5edaef36af2826762bf75f4335c3829b']] * len(img)
-        else:
-            mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
+        mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
 
         kwargs_ = dict(indexs=mesh_index)
 
@@ -443,6 +455,8 @@ class NeMo(BaseModel):
         return preds
 
     def evaluate_corr(self, sample, debug=False):
+        import BboxTools as bbt
+        from PIL import Image, ImageDraw
         self.net.eval()
 
         ori_img = sample["img"].numpy()
@@ -468,8 +482,6 @@ class NeMo(BaseModel):
             if not os.path.exists(f'./visual/Corr/{saved_path}/{selected_point}'):
                 os.makedirs(f'./visual/Corr/{saved_path}/{selected_point}')
             # print('ori_img[batch_id]: ', ori_img[0].shape)
-            import BboxTools as bbt
-            from PIL import Image, ImageDraw
             point_size = 3
             threshold = 0.85
             for batch_id in range(img.shape[0]):
@@ -484,6 +496,66 @@ class NeMo(BaseModel):
                 this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img_.size[::-1])
                 imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
                 img_.save(f'./visual/Corr/{saved_path}/{selected_point}/sim_{sim}.png')
+
+        return None
+
+    def evaluate_locate(self, sample, debug=False):
+        import BboxTools as bbt
+        from PIL import Image, ImageDraw
+        self.net.eval()
+
+        ori_img = sample["img"].numpy()
+        sample = self.transforms(sample)
+        img = sample["img"].to(self.device)
+        with torch.no_grad():
+            feature_map = self.net.module.forward_test(img)
+        print('feature_map: ', feature_map.shape)
+        feature_shape = feature_map.shape[2:]
+        image_shape = ori_img.shape[2:]
+
+        imd_list = []
+        img_list = []
+        for batch_id in range(img.shape[0]):
+            img_ = Image.fromarray((ori_img[batch_id].transpose(1, 2, 0) * 255).astype(np.uint8))
+            img_list.append(img_)
+            imd = ImageDraw.ImageDraw(img_)
+            imd_list.append(imd)
+
+        for part_id, interpolate_feature in enumerate(self.parts_feature):
+            name = self.part_loader.get_name_listed()[part_id]
+            # if name != 'wheel4':
+            #     continue
+            R = 255 * (part_id + 1) / len(self.parts_feature)
+            G = 255 * (len(self.parts_feature) - part_id) / len(self.parts_feature)
+            B = 255 * (part_id + 1) / len(self.parts_feature)
+            for point_feature in interpolate_feature:
+                point_feature = point_feature.view(1, -1, 1, 1).to(feature_map.device)
+                similarity = point_feature * feature_map
+                similarity = similarity.sum(dim=1)
+                similarity = similarity / torch.norm(point_feature) / torch.norm(feature_map, dim=1)
+                similarity = similarity.view(similarity.shape[0], -1)
+                max_points = torch.argmax(similarity, dim=1).detach().cpu().numpy()
+                max_sims = torch.max(similarity, dim=1)[0].detach().cpu().numpy()
+                xs, ys = (max_points / feature_shape[1]) / feature_shape[1] * image_shape[1], \
+                    (max_points % feature_shape[1]) / feature_shape[0] * image_shape[0]
+
+                point_size = 3
+                threshold = 0.85
+                for batch_id in range(img.shape[0]):
+                    x, y = xs[batch_id], ys[batch_id]
+                    sim = max_sims[batch_id]
+                    # print('similarity: ', sim)
+                    if sim < threshold:
+                        continue
+                    # print('x, y: ', x, y)
+                    this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=image_shape)
+                    imd_list[batch_id].ellipse(this_bbox.pillow_bbox(), fill=(int(R), int(G), int(B)))
+
+        saved_path = self.folder.split('/')[1] + '/' + self.folder.split('/')[3]
+        if not os.path.exists(f'./visual/Locate/{saved_path}'):
+            os.makedirs(f'./visual/Locate/{saved_path}')
+        for img_ in img_list:
+            img_.save(f'./visual/Locate/{saved_path}/{np.random.random()}.png')
 
         return None
 

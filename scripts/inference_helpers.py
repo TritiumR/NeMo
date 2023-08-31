@@ -69,6 +69,20 @@ def inference_correlation(
     return None
 
 
+def inference_part_locate(
+        cfg,
+        cate,
+        model,
+        dataloader,
+        cached_pred=None
+):
+    for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
+        if cached_pred is None or True:
+            _ = model.evaluate_locate(sample)
+
+    return None
+
+
 def print_3d_pose_estimation(
     cfg,
     all_categories,
@@ -99,4 +113,5 @@ def print_3d_pose_estimation(
     logging.info('\n'+cate_line+'\n'+pi_6_acc+'\n'+pi_18_acc+'\n'+med_err)
 
 
-helper_func_by_task = {"3d_pose_estimation": inference_3d_pose_estimation, "3d_pose_estimation_print": print_3d_pose_estimation, "correlation_marking": inference_correlation}
+helper_func_by_task = {"3d_pose_estimation": inference_3d_pose_estimation, "3d_pose_estimation_print": print_3d_pose_estimation,
+                       "correlation_marking": inference_correlation, "part_locate": inference_part_locate}
