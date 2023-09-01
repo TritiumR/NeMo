@@ -59,8 +59,13 @@ class NeMo(BaseModel):
         self.visual_kp = cfg.training.visual_kp
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
-        self.folder = cfg.args.checkpoint
+        if mode == 'test':
+            self.folder = cfg.args.checkpoint
         self.avg_mesh = cfg.inference.avg_mesh
+        self.ori_mesh = cfg.ori_mesh
+
+        if self.ori_mesh:
+            self.dataset_config['ori_mesh'] = True
 
         if cfg.task == 'correlation_marking':
             self.build()
@@ -76,7 +81,11 @@ class NeMo(BaseModel):
         if self.raster_conf['down_rate'] == -1:
             self.raster_conf['down_rate'] = self.net.module.net_stride
         self.net.module.kwargs['n_vert'] = self.num_verts
-        self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
+
+        if self.ori_mesh:
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_ori_mesh_listed(), device='cuda')
+        else:
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
 
     def build(self):
         if self.mode == "train":
@@ -124,15 +133,6 @@ class NeMo(BaseModel):
 
         img = sample['img'].cuda()
         obj_mask = sample["obj_mask"].cuda()
-        # verts = sample["verts"]
-        # faces = sample["faces"]
-        # order = sample["index"]
-        # verts_len = sample["verts_len"]
-        # faces_len = sample["faces_len"]
-        # print('img: ', img.shape)
-        # print('verts: ', verts.shape)
-        # print('verts_len: ', verts_len.shape)
-        # print('order: ', order.shape)
 
         index = torch.Tensor([[k for k in range(self.num_verts)]] * img.shape[0]).cuda()
         mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
@@ -317,13 +317,13 @@ class NeMo(BaseModel):
 
         xvert = to_tensor(self.mesh_loader.get_mesh_listed()[0])
         xface = to_tensor(self.mesh_loader.get_mesh_listed()[1])
+
+        if self.ori_mesh:
+            xvert = to_tensor(self.mesh_loader.get_ori_mesh_listed()[0])
+            xface = to_tensor(self.mesh_loader.get_ori_mesh_listed()[1])
+
         get_mesh_index = self.mesh_loader.get_index_list().cuda()
-        # print('xvert: ', len(xvert))
-        # print('xface: ', len(xface))
-        # print(xvert[0])
-        # print(xface[0])
-        # print('xvert: ', xvert.shape)
-        # print('xface: ', xface.shape)
+
         self.inter_module = MeshInterpolateModule(
             xvert,
             xface,

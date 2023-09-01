@@ -7,6 +7,8 @@ import torch
 from torch.utils.data import Dataset
 import torchvision
 import point_cloud_utils as pcu
+from sklearn.neighbors import KDTree
+from pytorch3d.io import load_obj
 
 from nemo.utils import get_abs_path
 import os
@@ -18,6 +20,7 @@ class MeshLoader():
             self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
             self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
+            cate_id = '02958343'
 
         images_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
         index_path = os.path.join(dataset_config['root_path'], 'index', cate, '4d22bfe3097f63236436916a86a90ed7')
@@ -31,9 +34,27 @@ class MeshLoader():
         self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
         self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
+        # print('index_list: ', self.index_list[0].shape)
+
+        if dataset_config.get('ori_mesh', False):
+            self.ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id)
+            self.ori_mesh_name_dict = dict()
+            self.ori_mesh_list = [self.get_ori_meshes(name_) for name_ in self.mesh_name_dict.keys()]
+
+            # nearst point
+            for idx, index in enumerate(self.index_list):
+                sample_verts = self.mesh_list[idx][0][index]
+                ori_verts = self.ori_mesh_list[idx][0]
+                kdtree = KDTree(ori_verts)
+                _, nearest_idx = kdtree.query(sample_verts, k=1)
+                # print('nearest_idx: ', nearest_idx.shape)
+                self.index_list[idx] = nearest_idx[:, 0]
 
     def get_mesh_listed(self):
         return [t[0].numpy() for t in self.mesh_list], [t[1].numpy() for t in self.mesh_list]
+
+    def get_ori_mesh_listed(self):
+        return [t[0].numpy() for t in self.ori_mesh_list], [t[1].numpy() for t in self.ori_mesh_list]
 
     def get_index_list(self, indexs=None):
         if indexs is not None:
@@ -57,6 +78,71 @@ class MeshLoader():
         verts = torch.from_numpy(verts.astype(np.float32))
         
         return verts, faces
+
+    def get_ori_meshes(self, instance_id, ):
+        mesh_fn = os.path.join(self.ori_mesh_path, instance_id, 'models', 'model_normalized.obj')
+        verts, faces_idx, _ = load_obj(mesh_fn)
+        faces = faces_idx.verts_idx
+
+        # normalize
+        vert_middle = (verts.max(dim=0)[0] + verts.min(dim=0)[0]) / 2
+        verts = verts - vert_middle
+
+        return verts, faces
+
+
+class PartLoader():
+    def __init__(self, dataset_config, cate='car'):
+        if cate == 'car':
+            chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+
+        # load chosen mesh
+        mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
+        chosen_verts, _, _, _ = pcu.load_mesh_vfnc(os.path.join(mesh_path, f'{chosen_id}_recon_mesh.ply'))
+        vert_middle = (chosen_verts.max(axis=0) + chosen_verts.min(axis=0)) / 2
+        vert_scale = ((chosen_verts.max(axis=0) - chosen_verts.min(axis=0)) ** 2).sum() ** 0.5
+        chosen_verts = (chosen_verts - vert_middle) / vert_scale
+
+        # load chosen index
+        index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id, chosen_id, 'index.npy')
+        chosen_index = np.load(index_path, allow_pickle=True)[()]
+        verts_with_feats = chosen_verts[chosen_index]
+
+        # load annotated parts
+        self.part_meshes = []
+        self.part_names = []
+        self.weight = []
+        part_path = os.path.join(dataset_config['root_path'], 'part', cate)
+        for name in os.listdir(part_path):
+            part_fn = os.path.join(part_path, name)
+            if '.ply' in part_fn:
+                part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
+                part_verts = (part_verts - vert_middle) / vert_scale
+                part_verts = torch.from_numpy(part_verts.astype(np.float32))
+                part_faces = torch.from_numpy(part_faces.astype(np.int32))
+            else:
+                part_verts, faces_idx, _ = load_obj(part_fn)
+                part_faces = faces_idx.verts_idx
+            kdtree = KDTree(verts_with_feats)
+            dist, nearest_idx = kdtree.query(part_verts, k=3)
+            self.weight.append((dist, nearest_idx))
+            # vert_middle = (part_verts.max(axis=0) + part_verts.min(axis=0)) / 2
+            # part_verts = part_verts - vert_middle
+            # part_faces = faces_idx.verts_idx
+            self.part_meshes.append((part_verts, part_faces))
+            self.part_names.append(name.split('.')[0])
+
+    def get_name_listed(self):
+        return self.part_names
+
+    def get_part_mesh(self, name=None):
+        if name is None:
+            return [mesh[0].numpy() for mesh in self.part_meshes], [mesh[1].numpy() for mesh in self.part_meshes]
+        return self.part_meshes[self.part_names.index(name)]
+
+    def get_weight(self):
+        return self.weight
+
 
 class SyntheticShapeNet(Dataset):
     def __init__(self, data_type, category, root_path, data_camera_mode='shapnet_car', **kwargs):
