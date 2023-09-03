@@ -21,9 +21,10 @@ class MeshLoader():
             self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
             cate_id = '02958343'
+            chosen_id = '4d22bfe3097f63236436916a86a90ed7'
 
         images_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
-        index_path = os.path.join(dataset_config['root_path'], 'index', cate, '4d22bfe3097f63236436916a86a90ed7')
+        index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id)
 
         self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
         self.mesh_name_dict = dict()
@@ -31,6 +32,8 @@ class MeshLoader():
             if '.' in name or name in self.skip_list:
                 continue
             self.mesh_name_dict[name] = len(self.mesh_name_dict)
+        if chosen_id not in self.mesh_name_dict:
+            self.mesh_name_dict[chosen_id] = len(self.mesh_name_dict)
         self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
         self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
@@ -95,40 +98,26 @@ class PartLoader():
     def __init__(self, dataset_config, cate='car'):
         if cate == 'car':
             chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+            cate_id = '02958343'
 
         # load chosen mesh
-        mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
-        chosen_verts, _, _, _ = pcu.load_mesh_vfnc(os.path.join(mesh_path, f'{chosen_id}_recon_mesh.ply'))
-        vert_middle = (chosen_verts.max(axis=0) + chosen_verts.min(axis=0)) / 2
-        vert_scale = ((chosen_verts.max(axis=0) - chosen_verts.min(axis=0)) ** 2).sum() ** 0.5
-        chosen_verts = (chosen_verts - vert_middle) / vert_scale
-
-        # load chosen index
-        index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id, chosen_id, 'index.npy')
-        chosen_index = np.load(index_path, allow_pickle=True)[()]
-        verts_with_feats = chosen_verts[chosen_index]
+        ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
+        chosen_verts, _, _ = load_obj(ori_mesh_path)
+        vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
 
         # load annotated parts
         self.part_meshes = []
         self.part_names = []
-        self.weight = []
         part_path = os.path.join(dataset_config['root_path'], 'part', cate)
         for name in os.listdir(part_path):
+            if '.obj' not in name:
+                continue
             part_fn = os.path.join(part_path, name)
-            if '.ply' in part_fn:
-                part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
-                part_verts = (part_verts - vert_middle) / vert_scale
-                part_verts = torch.from_numpy(part_verts.astype(np.float32))
-                part_faces = torch.from_numpy(part_faces.astype(np.int32))
-            else:
-                part_verts, faces_idx, _ = load_obj(part_fn)
-                part_faces = faces_idx.verts_idx
-            kdtree = KDTree(verts_with_feats)
-            dist, nearest_idx = kdtree.query(part_verts, k=3)
-            self.weight.append((dist, nearest_idx))
+            part_verts, faces_idx, _ = load_obj(part_fn)
+            part_faces = faces_idx.verts_idx
+            part_verts = part_verts - vert_middle
             # vert_middle = (part_verts.max(axis=0) + part_verts.min(axis=0)) / 2
             # part_verts = part_verts - vert_middle
-            # part_faces = faces_idx.verts_idx
             self.part_meshes.append((part_verts, part_faces))
             self.part_names.append(name.split('.')[0])
 
@@ -139,9 +128,6 @@ class PartLoader():
         if name is None:
             return [mesh[0].numpy() for mesh in self.part_meshes], [mesh[1].numpy() for mesh in self.part_meshes]
         return self.part_meshes[self.part_names.index(name)]
-
-    def get_weight(self):
-        return self.weight
 
 
 class SyntheticShapeNet(Dataset):

@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import os
+from sklearn.neighbors import KDTree
+import matplotlib.pyplot as plt
 
 from nemo.models.base_model import BaseModel
 from nemo.models.feature_banks import mask_remove_near, remove_near_vertices_dist
@@ -59,7 +61,12 @@ class NeMo(BaseModel):
         self.visual_kp = cfg.training.visual_kp
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
-        self.folder = cfg.args.checkpoint
+        if mode == 'test':
+            self.folder = cfg.args.checkpoint
+        self.ori_mesh = cfg.ori_mesh
+
+        if self.ori_mesh:
+            self.dataset_config['ori_mesh'] = True
 
         if cfg.task == 'correlation_marking':
             self.build()
@@ -67,8 +74,7 @@ class NeMo(BaseModel):
 
         self.part_loader = PartLoader(self.dataset_config, cate=cate)
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
-        verts, faces = self.mesh_loader.get_meshes('4d22bfe3097f63236436916a86a90ed7')
-        self.whole_mesh = ([verts.numpy()], [faces.numpy()])
+        self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
         self.build()
 
         self.raster_conf = {
@@ -78,8 +84,11 @@ class NeMo(BaseModel):
         if self.raster_conf['down_rate'] == -1:
             self.raster_conf['down_rate'] = self.net.module.net_stride
         self.net.module.kwargs['n_vert'] = self.num_verts
-        self.projector = PackedRaster(self.raster_conf, self.whole_mesh, device='cuda')
-        self.part_projector = PackedRaster(self.raster_conf, self.part_loader.get_part_mesh(), device='cuda')
+
+        if self.ori_mesh:
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_ori_mesh_listed(), device='cuda')
+        else:
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
 
     def build(self):
         if self.mode == "train":
@@ -122,20 +131,10 @@ class NeMo(BaseModel):
 
     def train(self, sample):
         self.net.train()
-        vis_img_batch = sample['img'].clone()
         sample = self.transforms(sample)
 
         img = sample['img'].cuda()
         obj_mask = sample["obj_mask"].cuda()
-        # verts = sample["verts"]
-        # faces = sample["faces"]
-        # order = sample["index"]
-        # verts_len = sample["verts_len"]
-        # faces_len = sample["faces_len"]
-        # print('img: ', img.shape)
-        # print('verts: ', verts.shape)
-        # print('verts_len: ', verts_len.shape)
-        # print('order: ', order.shape)
 
         index = torch.Tensor([[k for k in range(self.num_verts)]] * img.shape[0]).cuda()
         mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
@@ -148,33 +147,8 @@ class NeMo(BaseModel):
             kp = torch.gather(kp, dim=1, index=get_mesh_index[..., None].expand(-1, -1, 2))
             kpvis = torch.gather(kpvis, dim=1, index=get_mesh_index)
 
-        # # angtian debug
-        # import BboxTools as bbt
-        # from PIL import Image, ImageDraw
-        #
-        # def foo(t0, kps, vis_mask_, iidx=0, point_size=3):
-        #     im = Image.fromarray((t0.cpu().numpy()[iidx] * 255).astype(np.uint8)).convert('RGB')
-        #     imd = ImageDraw.ImageDraw(im)
-        #     for k, vv in zip(kps[iidx], vis_mask_[iidx]):
-        #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
-        #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
-        #         break
-        #
-        #     return im
-        # for idx in range(8):
-        #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{idx}.png')
-        #
-        # import ipdb
-        # ipdb.set_trace()
-
-        # print('kp: ', kp.shape)
-        # print('kpvis: ', kpvis.shape)
         features = self.net.forward(img, keypoint_positions=kp, obj_mask=1 - obj_mask, do_normalize=True,)
 
-        # print('features: ', features.shape)
-
-        # import ipdb
-        # ipdb.set_trace()
         if self.training_params.separate_bank:
             get, y_idx, noise_sim = self.memory_bank(
                 features.to(self.ext_gpu), index.to(self.ext_gpu), kpvis.to(self.ext_gpu)
@@ -190,16 +164,12 @@ class NeMo(BaseModel):
         kappas = {'pos': self.training_params.get('weight_pos', 0),
                   'near': self.training_params.get('weight_near', 1e5),
                   'clutter': -math.log(self.training_params.weight_noise)}
+
         # The default manner in VoGE-NeMo
         if self.training_params.remove_near_mode == 'vert':
-            # vert_ = []
-            # for batch_id in range(img.shape[0]):
-            #     vert_.append(verts[batch_id, order[batch_id]])
-            # vert_ = torch.stack(vert_).cuda()
             with torch.no_grad():
                 verts_ = func_reselect(self.projector.meshes, mesh_index)[1]
                 vert_ = torch.gather(verts_, dim=1, index=get_mesh_index[..., None].expand(-1, -1, 3))
-                # print('vert_: ', vert_.shape)
 
                 vert_dis = (vert_.unsqueeze(1) - vert_.unsqueeze(2)).pow(2).sum(-1).pow(.5)
 
@@ -318,31 +288,53 @@ class NeMo(BaseModel):
                 **self.inference_params.rasterizer, cameras=cameras, raster_settings=raster_settings
             )
 
-        xvert = to_tensor(self.part_loader.get_part_mesh()[0])
-        xface = to_tensor(self.part_loader.get_part_mesh()[1])
-        get_vert_weight = self.part_loader.get_weight()
+        if self.ori_mesh:
+            chosen_verts, chosen_faces = self.mesh_loader.get_ori_meshes(self.chosen_id)
+        else:
+            chosen_verts, chosen_faces = self.mesh_loader.get_meshes(self.chosen_id)
 
-        self.parts_feature = []
-        for part_id, name in enumerate(self.part_loader.get_name_listed()):
-            part_index = self.part_loader.get_weight()[part_id]
-            dist = np.array(part_index[0])
-            dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
-            weight = torch.softmax(1 / dist, dim=0)
-            nearest_feature = [self.feature_bank[nearest] for nearest in part_index[1]]
-            self.parts_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
-        # print('xvert: ', len(xvert))
-        # print('xface: ', len(xface))
-        # print(xvert[0])
-        # print(xface[0])
-        # print('xvert: ', xvert.shape)
-        # print('xface: ', xface.shape)
+        xvert = [chosen_verts]
+        xface = [chosen_faces]
+        mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]]
+        get_mesh_index = self.mesh_loader.get_index_list(mesh_index).cuda()
+
         self.inter_module = MeshInterpolateModule(
             xvert,
             xface,
             self.feature_bank,
             rasterizer=rasterizer,
             post_process=None,
-            interpolate_index=get_vert_weight,
+            interpolate_index=get_mesh_index,
+        ).to(self.device)
+
+        # deal with part rendering
+        part_xvert = self.part_loader.get_part_mesh()[0]
+        part_xface = self.part_loader.get_part_mesh()[1]
+        verts_with_feature = chosen_verts[get_mesh_index[0]]
+        # print('verts_with_feature: ', verts_with_feature.shape)
+
+        # interpolate part features from memory_bank
+        self.parts_feature = []
+        kdtree = KDTree(verts_with_feature)
+        for part_vert in part_xvert:
+            dist, nearest_idx = kdtree.query(part_vert, k=3)
+            dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
+            dist = dist.type(torch.float32)
+            weight = torch.softmax(1 / dist, dim=1)
+            nearest_feature = [self.feature_bank[nearest] for nearest in nearest_idx]
+            self.parts_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
+
+        part_xvert = to_tensor(part_xvert)
+        part_xface = to_tensor(part_xface)
+
+        self.part_inter_module = MeshInterpolateModule(
+            part_xvert,
+            part_xface,
+            self.feature_bank,
+            rasterizer=rasterizer,
+            post_process=None,
+            interpolate_index=None,
+            features=self.parts_feature,
         ).to(self.device)
 
         if self.cfg.task == 'part_locate':
@@ -368,13 +360,8 @@ class NeMo(BaseModel):
                 distance_samples=distance_samples,
                 device=self.device
             )
-            if dof == 3:
-                assert distance_samples.shape[0] == 1
-                self.record_distance = distance_samples[0]
-            if dof == 6:
-                self.samples_principal = torch.stack(
-                    (torch.from_numpy(px_samples).view(-1, 1).expand(-1, py_samples.shape[0]) * map_shape[1],
-                     torch.from_numpy(py_samples).view(1, -1).expand(px_samples.shape[0], -1) * map_shape[0])).view(2, -1).T.to(self.device)
+            assert distance_samples.shape[0] == 1
+            self.record_distance = distance_samples[0]
 
         else:
             self.poses, self.kp_coords, self.kp_vis = pre_compute_kp_coords(
@@ -454,51 +441,6 @@ class NeMo(BaseModel):
 
         return preds
 
-    def evaluate_corr(self, sample, debug=False):
-        import BboxTools as bbt
-        from PIL import Image, ImageDraw
-        self.net.eval()
-
-        ori_img = sample["img"].numpy()
-        sample = self.transforms(sample)
-        img = sample["img"].to(self.device)
-        with torch.no_grad():
-            feature_map = self.net.module.forward_test(img)
-        print('feature_map: ', feature_map.shape)
-        feature_shape = feature_map.shape[2:]
-        image_shape = ori_img.shape[2:]
-
-        for selected_point in range(0, 10):
-            point_feature = self.feature_bank[selected_point, :].cuda().view(1, -1, 1, 1)
-            similarity = point_feature * feature_map
-            similarity = similarity.sum(dim=1)
-            similarity = similarity / torch.norm(point_feature) / torch.norm(feature_map, dim=1)
-            similarity = similarity.view(similarity.shape[0], -1)
-            max_points = torch.argmax(similarity, dim=1).detach().cpu().numpy()
-            max_sims = torch.max(similarity, dim=1)[0].detach().cpu().numpy()
-            xs, ys = (max_points / feature_shape[1]) / feature_shape[1] * image_shape[1], (max_points % feature_shape[1]) / feature_shape[0] * image_shape[0]
-
-            saved_path = self.folder.split('/')[1] + '/' + self.folder.split('/')[3]
-            if not os.path.exists(f'./visual/Corr/{saved_path}/{selected_point}'):
-                os.makedirs(f'./visual/Corr/{saved_path}/{selected_point}')
-            # print('ori_img[batch_id]: ', ori_img[0].shape)
-            point_size = 3
-            threshold = 0.85
-            for batch_id in range(img.shape[0]):
-                img_ = Image.fromarray((ori_img[batch_id].transpose(1, 2, 0) * 255).astype(np.uint8))
-                imd = ImageDraw.ImageDraw(img_)
-                x, y = xs[batch_id], ys[batch_id]
-                sim = max_sims[batch_id]
-                # print('similarity: ', sim)
-                if sim < threshold:
-                    continue
-                # print('x, y: ', x, y)
-                this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img_.size[::-1])
-                imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
-                img_.save(f'./visual/Corr/{saved_path}/{selected_point}/sim_{sim}.png')
-
-        return None
-
     def evaluate_locate(self, sample, debug=False):
         import BboxTools as bbt
         from PIL import Image, ImageDraw
@@ -509,7 +451,7 @@ class NeMo(BaseModel):
         img = sample["img"].to(self.device)
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
-        print('feature_map: ', feature_map.shape)
+        # print('feature_map: ', feature_map.shape)
         feature_shape = feature_map.shape[2:]
         image_shape = ori_img.shape[2:]
 
@@ -522,12 +464,14 @@ class NeMo(BaseModel):
             imd_list.append(imd)
 
         for part_id, interpolate_feature in enumerate(self.parts_feature):
-            name = self.part_loader.get_name_listed()[part_id]
+            # name = self.part_loader.get_name_listed()[part_id]
             # if name != 'wheel4':
             #     continue
-            R = 255 * (part_id + 1) / len(self.parts_feature)
-            G = 255 * (len(self.parts_feature) - part_id) / len(self.parts_feature)
-            B = 255 * (part_id + 1) / len(self.parts_feature)
+            cmap = plt.get_cmap('jet')
+            colors = cmap(part_id / len(self.parts_feature))
+            R = int(colors[0] * 255)
+            G = int(colors[1] * 255)
+            B = int(colors[2] * 255)
             for point_feature in interpolate_feature:
                 point_feature = point_feature.view(1, -1, 1, 1).to(feature_map.device)
                 similarity = point_feature * feature_map
@@ -540,7 +484,7 @@ class NeMo(BaseModel):
                     (max_points % feature_shape[1]) / feature_shape[0] * image_shape[0]
 
                 point_size = 3
-                threshold = 0.85
+                threshold = 0.80
                 for batch_id in range(img.shape[0]):
                     x, y = xs[batch_id], ys[batch_id]
                     sim = max_sims[batch_id]
@@ -549,7 +493,7 @@ class NeMo(BaseModel):
                         continue
                     # print('x, y: ', x, y)
                     this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=image_shape)
-                    imd_list[batch_id].ellipse(this_bbox.pillow_bbox(), fill=(int(R), int(G), int(B)))
+                    imd_list[batch_id].ellipse(this_bbox.pillow_bbox(), fill=((R, G, B)))
 
         saved_path = self.folder.split('/')[1] + '/' + self.folder.split('/')[3]
         if not os.path.exists(f'./visual/Locate/{saved_path}'):
