@@ -83,6 +83,50 @@ def inference_part_locate(
     return None
 
 
+def inference_part_locate_and_rotate(
+        cfg,
+        cate,
+        model,
+        dataloader,
+        cached_pred=None
+):
+    save_pred = {}
+    pose_errors = []
+    running = []
+    for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
+        if cached_pred is None or True:
+            preds, part_preds = model.evaluate_part(sample)
+
+            for pred, name_ in zip(preds, sample['this_name']):
+                save_pred[str(name_)] = pred
+        else:
+            for name_ in sample['this_name']:
+                save_pred[str(name_)] = cached_pred[str(name_)]
+        for idx, pred in enumerate(preds):
+            # _err = pose_error(sample, pred["final"][0])
+            _err = pred['pose_error']
+            print('pi6_acc: ', np.mean(np.array(_err) < np.pi / 6), 'pi18_acc: ', np.mean(np.array(_err) < np.pi / 18),
+                  'med_err: ', np.median(np.array(_err)) / np.pi * 180.0)
+            if np.mean(np.array(_err) < np.pi / 6) < 0.5:
+                image_ori = sample['img_ori'][idx].cpu().numpy().transpose(1, 2, 0)
+                image_ori = (image_ori * 255).astype(np.uint8)
+                image_ori = Image.fromarray(image_ori)
+                if not os.path.exists('./visual/failure'):
+                    os.makedirs('./visual/failure')
+                image_ori.save(f'./visual/failure/err_{np.mean(np.array(_err))}.png')
+            pose_errors.append(_err)
+            running.append((cate, _err))
+    pose_errors = np.array(pose_errors)
+
+    results = {}
+    results["running"] = running
+    results["pi6_acc"] = np.mean(pose_errors < np.pi / 6)
+    results["pi18_acc"] = np.mean(pose_errors < np.pi / 18)
+    results["med_err"] = np.median(pose_errors) / np.pi * 180.0
+    results["save_pred"] = save_pred
+
+    return results
+
 def print_3d_pose_estimation(
     cfg,
     all_categories,
@@ -114,4 +158,4 @@ def print_3d_pose_estimation(
 
 
 helper_func_by_task = {"3d_pose_estimation": inference_3d_pose_estimation, "3d_pose_estimation_print": print_3d_pose_estimation,
-                       "correlation_marking": inference_correlation, "part_locate": inference_part_locate}
+                       "correlation_marking": inference_correlation, "part_locate": inference_part_locate, "part_locate_and_rotate": inference_part_locate_and_rotate}

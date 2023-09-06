@@ -6,6 +6,7 @@ from nemo.utils import rotation_theta
 from pytorch3d.structures import Meshes
 from pytorch3d.ops.interp_face_attrs import interpolate_face_attributes
 from pytorch3d.renderer import TexturesVertex as Textures
+from pytorch3d.transforms import Transform3d
 import os
 from PIL import Image
 # if True:
@@ -39,6 +40,27 @@ def func_reselect(meshes, indexs, **kwargs):
     faces_ = [meshes._faces_list[i] for i in indexs]
     meshes_out = Meshes(verts=verts_, faces=faces_).to(meshes.device)
     return meshes_out, meshes_out.verts_padded()
+
+
+def rotation_matrix(azimuth, elevation):
+    # Create the azimuth rotation matrix
+    Rz = torch.tensor([
+        [torch.cos(azimuth), -torch.sin(azimuth), 0],
+        [torch.sin(azimuth), torch.cos(azimuth), 0],
+        [0, 0, 1]
+    ])
+
+    # Create the elevation rotation matrix
+    Rx = torch.tensor([
+        [1, 0, 0],
+        [0, torch.cos(elevation), -torch.sin(elevation)],
+        [0, torch.sin(elevation), torch.cos(elevation)]
+    ])
+
+    # Combine the rotations
+    R = torch.mm(Rx, Rz)
+
+    return R
 
 
 class PackedRaster():
@@ -77,7 +99,7 @@ class PackedRaster():
 
         if raster_type == 'near' or raster_type == 'triangle':
             raster_setting = RasterizationSettings(image_size=feature_size,
-                                                   blur_radius=raster_configs.get('blur_radius', 0.0), )
+                                                   blur_radius=raster_configs.get('blur_radius', 0.0), bin_size=0)
             self.raster = MeshRasterizer(raster_settings=raster_setting, cameras=cameras)
 
             if isinstance(object_mesh, Meshes):
@@ -239,6 +261,92 @@ class PackedRaster():
         mixed_image = Image.fromarray(mixed_image)
         mixed_image.save(os.path.join(saved_path, f'error{np.array(error).mean():.4f}.jpg'))
 
+    def visual_part_pose(self, part_verts, part_faces, img, pose, part_pose, folder, error):
+        render_image_size = (512, 512)
+
+        raster_settings = RasterizationSettings(
+            image_size=render_image_size,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+            bin_size=0
+        )
+        # We can add a point light in front of the object.
+        lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
+
+        # prepare camera
+        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+                                     principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+                                     image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+
+        phong_renderer = MeshRenderer(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=raster_settings
+            ),
+            shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
+        )
+
+        distance = pose['distance']
+        elevation = pose['elevation']
+        azimuth = pose['azimuth']
+        theta = pose['theta']
+
+        R, T = look_at_view_transform(distance, elevation, azimuth, device=self.cameras.device, degrees=False)
+        R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
+
+        device = self.cameras.device
+        image_list = []
+        idx = 0
+        for part_id, part_vert in enumerate(part_verts):
+            # print('idx: ', idx)
+            if part_id == 4 or part_id == 6:
+                continue
+            offset = part_pose['offset'][idx][None]
+            azimuth = part_pose['azimuth'][idx]
+            elevation = part_pose['elevation'][idx]
+            scale = part_pose['scale'][idx]
+
+            rotate = rotation_matrix(azimuth, elevation)
+
+            # print('offset: ', offset)
+            # print('rotate: ', rotate)
+            # print('scale: ', scale)
+
+            rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
+            transform = Transform3d(matrix=rotate.to(device), device=device)
+            transform = transform.scale(scale.to(device))
+            transform = transform.translate(offset.to(device))
+
+            part_vert = transform.transform_points(torch.from_numpy(part_vert).to(device))
+            part_face = torch.from_numpy(part_faces[part_id]).to(device)
+
+            verts_features = torch.ones_like(part_vert)[None]  # (1, V, 3)
+            textures = Textures(verts_features=verts_features.to(device))
+
+            mesh = Meshes(verts=[part_vert], faces=[part_face], textures=textures).to(device)
+
+            image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
+            image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+            image_list.append(image)
+
+            idx += 1
+
+        saved_path = './visual/PartPose/' + folder.split('/')[1] + '/' + folder.split('/')[3]
+        if not os.path.exists(saved_path):
+            os.makedirs(saved_path)
+
+        img = img.permute(1, 2, 0).numpy()
+
+        mixed_image = np.zeros_like(img)
+        for image in image_list:
+            mixed_image += image * 0.6
+
+        mixed_image = ((mixed_image * 0.6 + img * 0.4) * 255).astype(np.uint8)
+        # clip the rgb value
+        mixed_image = np.clip(mixed_image, 0, 255)
+        mixed_image = Image.fromarray(mixed_image)
+        mixed_image.save(os.path.join(saved_path, f'error{np.array(error).mean():.4f}.jpg'))
+
 
 def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3,
                      **kwargs):
@@ -302,15 +410,6 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
     #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
 
     #     return im
-
-    # foo(tt, vis_mask).show()
-    # import ipdb
-    # ipdb.set_trace()
-    # if kwargs.get('order', None) is not None:
-    #     order = kwargs['order']
-    #     project_verts = project_verts[:, order]
-    #     vis_mask = vis_mask[:, order]
-    #     inner_mask = inner_mask[:, order]
 
     return project_verts, vis_mask & inner_mask
 

@@ -371,3 +371,138 @@ def solve_pose(
         preds.append(dict(final=refined, **{k: pred[k] / b for k in pred.keys()}))
 
     return preds
+
+
+def solve_part_pose(
+        cfg,
+        feature_map,
+        inter_modules,
+        parts_features,
+        initial_poses,
+        initial_offsets,
+):
+    b, c, hm_h, hm_w = feature_map.size()
+    pred = {}
+
+    part_scores = []
+    start_time = time.time()
+    # Step 1: Pre-compute part mask
+    for part_id in range(len(inter_modules)):
+        part_feature = parts_features[part_id].cuda()
+        # normalize
+        # part_feature = part_feature / part_feature.pow(2).sum(-1).pow(.5)[..., None, None]
+
+        _score = (
+            torch.nn.functional.conv2d(feature_map, part_feature.unsqueeze(2).unsqueeze(3))
+            .squeeze(1)
+        ).max(dim=1)[0]
+
+        # print('part score: ', _score.max(), _score.min())
+
+        part_scores.append(_score)
+
+    # use the camera pose estimated from the whole mesh
+    cams = []
+    thetas = []
+    for batch_id in range(b):
+        azum = initial_poses['azimuth'][batch_id]
+        elev = initial_poses['elevation'][batch_id]
+        theta = initial_poses['theta'][batch_id]
+        distance = initial_poses['distance'][batch_id]
+
+        c = camera_position_from_spherical_angles(distance, elev, azum, degrees=False)
+        cams.append(c[0])
+        thetas.append(theta.cpu())
+
+    # convert to Float32 Tensor
+
+    cams = torch.tensor(np.array(cams), dtype=torch.float32)
+    thetas = torch.tensor(np.array(thetas), dtype=torch.float32)
+    # print('cams.shape: ', cams.shape)
+    # print('thetas.shape: ', thetas.shape)
+
+    end_time = time.time()
+    pred["pre_compute_time"] = end_time - start_time
+
+    # Step 2: Refine part proposals from the whole pose
+    start_time = end_time
+
+    # optimize for each part
+    scale_preds = []
+    offset_preds = []
+    azimuth_preds = []
+    elevation_preds = []
+    for part_id, inter_module in enumerate(inter_modules):
+        if part_id == 4 or part_id == 6:
+            continue
+        initial_azimuth = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+        initial_elevation = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+        initial_offset = torch.from_numpy(initial_offsets[part_id].astype(np.float32)).repeat(b, 1)
+        initial_scale = torch.ones(b)
+        azimuths = torch.nn.Parameter(initial_azimuth, requires_grad=True)
+        elevations = torch.nn.Parameter(initial_elevation, requires_grad=True)
+        offsets = torch.nn.Parameter(initial_offset, requires_grad=True)
+        # print('out offsets: ', offsets)
+        scales = torch.nn.Parameter(initial_scale, requires_grad=False)
+
+        optim = construct_class_by_name(**cfg.inference.optimizer, params=[azimuths, elevations, offsets, scales])
+
+        scheduler_kwargs = {"optimizer": optim}
+        scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
+
+        # print('paid_id: ', part_id)
+        # print('offsets: ', offsets)
+        # print('scales: ', scales)
+        # print('rotates: ', rotates)
+        # print('name: ', cams)
+        # print('inter_module: ', inter_module)
+        for epo in range(cfg.inference.epochs):
+            # break
+            # [b, c, h, w]
+            projected_map = inter_module(
+                cams,
+                thetas,
+                mode=cfg.inference.inter_mode,
+                blur_radius=cfg.inference.blur_radius,
+                part_poses={'offset': offsets, 'scale': scales, 'azimuth': azimuths, 'elevation': elevations},
+            )
+
+            # [b, c, h, w] -> [b, h, w]
+            object_score = torch.sum(projected_map * feature_map, dim=1)
+            loss = loss_fg_bg(object_score, 0 - part_scores[part_id])
+            # import ipdb
+            # ipdb.set_trace()
+            # loss = loss_fg_only(object_score)
+
+            loss.backward()
+            optim.step()
+            optim.zero_grad()
+
+            if (epo + 1) % (cfg.inference.epochs // 3) == 0:
+                scheduler.step()
+
+        scale_preds.append(scales)
+        offset_preds.append(offsets.detach())
+        azimuth_preds.append(azimuths.detach())
+        elevation_preds.append(elevations.detach())
+
+    pred["optimization_time"] = end_time - start_time
+
+    preds = []
+
+    for i in range(b):
+        scale_pred, offset_pred, azimuth_pred, elevation_pred = (
+            [scale[i] for scale in scale_preds],
+            [offset[i] for offset in offset_preds],
+            [azimuth[i] for azimuth in azimuth_preds],
+            [elevation[i] for elevation in elevation_preds],
+        )
+        refined = [{
+            "scale": scale_pred,
+            "offset": offset_pred,
+            "azimuth": azimuth_pred,
+            "elevation": elevation_pred,
+            }]
+        preds.append(dict(final=refined, **{k: pred[k] / b for k in pred.keys()}))
+
+    return preds

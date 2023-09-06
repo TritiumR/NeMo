@@ -108,6 +108,7 @@ class PartLoader():
         # load annotated parts
         self.part_meshes = []
         self.part_names = []
+        self.offsets = []
         part_path = os.path.join(dataset_config['root_path'], 'part', cate)
         for name in os.listdir(part_path):
             if '.obj' not in name:
@@ -116,6 +117,9 @@ class PartLoader():
             part_verts, faces_idx, _ = load_obj(part_fn)
             part_faces = faces_idx.verts_idx
             part_verts = part_verts - vert_middle
+            part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
+            part_verts = part_verts - part_middle
+            self.offsets.append(np.array(part_middle))
             # vert_middle = (part_verts.max(axis=0) + part_verts.min(axis=0)) / 2
             # part_verts = part_verts - vert_middle
             self.part_meshes.append((part_verts, part_faces))
@@ -128,6 +132,11 @@ class PartLoader():
         if name is None:
             return [mesh[0].numpy() for mesh in self.part_meshes], [mesh[1].numpy() for mesh in self.part_meshes]
         return self.part_meshes[self.part_names.index(name)]
+
+    def get_offset(self, name=None):
+        if name is None:
+            return self.offsets
+        return self.offsets[self.part_names.index(name)]
 
 
 class SyntheticShapeNet(Dataset):

@@ -20,6 +20,7 @@ except:
     enable_voge = False
 
 from pytorch3d.renderer import MeshRasterizer
+from pytorch3d.transforms import Transform3d
 from sklearn.neighbors import KDTree
 
 from nemo.utils import (
@@ -47,6 +48,27 @@ def MeshInterpolateModule(*args, **kwargs):
         return MeshInterpolateModuleVoGE(*args, **kwargs)
 
 
+def rotation_matrix(azimuth, elevation):
+    # Create the azimuth rotation matrix
+    Rz = torch.stack([
+        torch.cos(azimuth), -torch.sin(azimuth), torch.tensor(0.),
+        torch.sin(azimuth), torch.cos(azimuth), torch.tensor(0.),
+        torch.tensor(0.), torch.tensor(0.), torch.tensor(1.)
+    ]).reshape(3, 3)
+
+    # Create the elevation rotation matrix
+    Rx = torch.stack([
+        torch.tensor(1.), torch.tensor(0.), torch.tensor(0.),
+        torch.tensor(0.), torch.cos(elevation), -torch.sin(elevation),
+        torch.tensor(0.), torch.sin(elevation), torch.cos(elevation)
+    ]).reshape(3, 3)
+
+    # Combine the rotations
+    R = torch.mm(Rx, Rz)
+
+    return R
+
+
 class MeshInterpolateModuleVoGE(nn.Module):
     def __init__(self, vertices, faces, memory_bank, rasterizer, post_process=None, off_set_mesh=False):
         super(MeshInterpolateModuleVoGE, self).__init__()
@@ -55,8 +77,6 @@ class MeshInterpolateModuleVoGE(nn.Module):
         self.memory = None
         self.update_memory(memory_bank=memory_bank,)
 
-        self.n_mesh = 1
-        
         # Preprocess convert meshes in PASCAL3d+ standard to Pytorch3D
         verts = pre_process_mesh_pascal(vertices)
 
@@ -133,7 +153,9 @@ class MeshInterpolateModuleMesh(nn.Module):
                 nearest_feature = [memory_bank[nearest] for nearest in nearest_idx]
                 # print('nearest_feature: ', torch.stack(nearest_feature, dim=0).shape)
                 # print('dist: ', weight.unsqueeze(-1).shape)
-                interpolate_feature.append((torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1))
+                feature = (torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1)
+                feature = feature / torch.norm(feature, dim=1, keepdim=True)
+                interpolate_feature.append(feature)
                 # print('interpolate_feature: ', interpolate_feature[-1].shape)
 
             memory_bank = interpolate_feature
@@ -147,9 +169,6 @@ class MeshInterpolateModuleMesh(nn.Module):
         self.update_memory(memory_bank=memory_bank, faces=faces)
 
         # Support multiple meshes at same time
-        self.n_mesh = len(vertices)
-        # # Preprocess convert mesh in PASCAL3d+ standard to Pytorch3D
-        # verts = [pre_process_mesh_pascal(t) for t in vertices]
         verts = vertices
 
         # Create Pytorch3D meshes
@@ -168,6 +187,8 @@ class MeshInterpolateModuleMesh(nn.Module):
                 vertex_memory_to_face_memory(m, f).to(m.device)
                 for m, f in zip(memory_bank, faces)
             ]
+
+        # print('face_memory: ', self.face_memory[0].shape, 'face: ', faces[0].shape)
 
     def to(self, *args, **kwargs):
         if "device" in kwargs.keys():
@@ -188,9 +209,7 @@ class MeshInterpolateModuleMesh(nn.Module):
     def cuda(self, device=None):
         return self.to(torch.device("cuda"))
 
-    def forward(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", indexs=None, **kwargs):
-        R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
-
+    def forward(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", indexs=None, part_poses=None, **kwargs):
         if indexs is not None:
             meshes, _ = func_reselect(self.meshes, indexs)
             face_memory = torch.cat([self.face_memory[idx] for idx in indexs], dim=0)
@@ -200,25 +219,43 @@ class MeshInterpolateModuleMesh(nn.Module):
         if self.off_set_mesh:
             meshes = self.meshes.offset_verts(deform_verts)
 
+        device = meshes.device
+        R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
+        R = R.to(device)
+        T = T.to(device)
+
+        if part_poses is not None:
+            vert_list = []
+            face_list = []
+            for idx in range(len(campos)):
+                offset = part_poses['offset'][idx][None]
+                scale = part_poses['scale'][idx]
+                azimuth = part_poses['azimuth'][idx]
+                elevation = part_poses['elevation'][idx]
+                rotate = rotation_matrix(azimuth, elevation)
+                rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
+
+                transform = Transform3d(matrix=rotate.to(device), device=device)
+                transform = transform.scale(scale.to(device))
+                transform = transform.translate(offset.to(device))
+
+                # print('transform done')
+                verts = meshes._verts_list[0]
+                faces = meshes._faces_list[0]
+                verts = transform.transform_points(verts)
+                vert_list.append(verts)
+                face_list.append(faces)
+
+            meshes = Meshes(verts=vert_list, faces=face_list).to(meshes.device)
+            # exit(0)
+
         n_cam = campos.shape[0]
-        if n_cam > 1 and self.n_mesh > 1:
+        if n_cam > 1:
             get = forward_interpolate(
                 R,
                 T,
                 meshes,
-                face_memory,
-                rasterizer=self.rasterizer,
-                blur_radius=blur_radius,
-                mode=mode,
-            )
-        elif n_cam > 1 and self.n_mesh == 1:
-            get = forward_interpolate(
-                R,
-                T,
-                meshes.extend(campos.shape[0]),
-                face_memory.repeat(campos.shape[0], 1, 1).view(
-                    -1, *self.face_memory.shape[1:]
-                ),
+                face_memory.repeat(n_cam, 1, 1),
                 rasterizer=self.rasterizer,
                 blur_radius=blur_radius,
                 mode=mode,
