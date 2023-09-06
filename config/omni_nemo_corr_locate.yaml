@@ -1,7 +1,8 @@
 dataset: config/datasets/DST_shapenet.yaml
 model: config/models/nemo_part.yaml
 
-task: part_locate
+task: part_locate_and_rotate
+ori_mesh: True
 
 training:
     batch_size: 10
