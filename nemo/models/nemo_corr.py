@@ -160,7 +160,7 @@ class NeMo(BaseModel):
         #     return im
         # for idx in range(8):
         #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{idx}.png')
-        #
+
         # import ipdb
         # ipdb.set_trace()
 

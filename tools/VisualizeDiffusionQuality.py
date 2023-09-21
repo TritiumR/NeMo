@@ -10,8 +10,20 @@ from pytorch3d.renderer import PerspectiveCameras
 from pytorch3d.io import load_objs_as_meshes, load_obj
 from pytorch3d.renderer.cameras import look_at_view_transform
 
-
+cat_type = input('category type: ')
 device = 'cuda:0'
+
+if cat_type == 'car':
+    annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/car'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple/train/car'
+    meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
+elif cat_type == 'plane':
+    annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/aeroplane'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple/train/aeroplane'
+    meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
+else:
+    raise NotImplementedError
+save_path = '../visual/DiffusionQuality'
 
 # render config
 render_image_size = (512, 512)
@@ -39,11 +51,6 @@ phong_renderer = MeshRenderer(
     ),
     shader=HardPhongShader(device=device, lights=lights, cameras=cameras),
 )
-
-annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/car'
-imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple/train/car'
-meshs_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
-save_path = '../visual/DiffusionQuality'
 
 if not os.path.exists(save_path):
     os.makedirs(save_path)

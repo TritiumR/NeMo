@@ -128,10 +128,10 @@ if config.cat_type == 'car':
     chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
 elif config.cat_type == 'plane':
     imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
-    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
+    recon_path = '../data/CorrData/mesh/aeroplane'
     ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
-    save_path = '../data/ShapeNet/Preprocess/plane'
-    chosen_instance = '1a888c2c86248bbcf2b0736dd4d8afe0'
+    save_path = '../data/ShapeNet/Preprocess/aeroplane'
+    chosen_instance = '3cb63efff711cfc035fc197bbabcd5bd'
 else:
     raise NotImplementedError
 

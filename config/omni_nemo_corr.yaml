@@ -1,7 +1,8 @@
 dataset: config/datasets/DST_shapenet.yaml
 model: config/models/nemo_corr.yaml
 
-task: correlation_marking
+task: 3d_pose_estimation
+ori_mesh: False
 
 training:
     batch_size: 30
@@ -21,6 +22,9 @@ inference:
 
     search_translation: false
     optimize_translation: false
+
+    visual_pose: False
+    avg_mesh: False
 
     px_sample:
         min: 0.0

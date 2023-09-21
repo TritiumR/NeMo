@@ -13,7 +13,7 @@ from nemo.models.feature_banks import mask_remove_near, remove_near_vertices_dis
 from nemo.models.mesh_interpolate_module import MeshInterpolateModule
 from nemo.models.solve_pose import pre_compute_kp_coords
 from nemo.models.solve_pose import solve_pose
-from nemo.models.batch_solve_pose import get_pre_render_samples
+from nemo.models.batch_solve_pose import get_pre_render_samples, loss_curve_part
 from nemo.models.batch_solve_pose import solve_pose as batch_solve_pose
 from nemo.models.batch_solve_pose import solve_part_pose as batch_solve_part_pose
 from nemo.utils import center_crop_fun
@@ -328,7 +328,7 @@ class NeMo(BaseModel):
             weight = torch.softmax(1 / dist, dim=1)
             nearest_feature = [self.feature_bank[nearest] for nearest in nearest_idx]
             part_feature = (torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1)
-            print('part_feature: ', part_feature.shape)
+            # print('part_feature: ', part_feature.shape)
             part_feature = part_feature / part_feature.norm(dim=1).unsqueeze(-1)
             self.parts_feature.append(part_feature)
 
@@ -456,6 +456,12 @@ class NeMo(BaseModel):
         self.net.eval()
 
         img = sample['img'].cuda()
+        ori_img = sample['img_ori'].numpy()
+
+        from PIL import Image
+        # print('shape: ', ori_img[0].shape)
+        img_ = Image.fromarray((ori_img[0].transpose(1, 2, 0) * 255).astype(np.uint8))
+        img_.save(f'./visual/image.png')
 
         mesh_index = [0] * img.shape[0]
 
@@ -527,7 +533,15 @@ class NeMo(BaseModel):
         )
         part_offsets = self.part_loader.get_offset()
 
-        print('names: ', self.part_loader.get_name_listed())
+        # # print('names: ', self.part_loader.get_name_listed())
+        # loss_curve_part(
+        #     self.cfg,
+        #     feature_map,
+        #     self.part_inter_modules,
+        #     self.parts_feature,
+        #     initial_pose,
+        #     part_offsets,
+        # )
 
         # print('part_feature: ', self.parts_feature[0].shape)
         part_preds = batch_solve_part_pose(
@@ -543,6 +557,8 @@ class NeMo(BaseModel):
             part_verts, part_faces = self.part_loader.get_part_mesh()
             self.projector.visual_part_pose(part_verts, part_faces, sample['img_ori'][idx], preds[idx]["final"][0],
                                             part_preds[idx]["final"][0], self.folder, preds[idx]["pose_error"])
+
+        # exit(0)
 
         return preds, part_preds
 

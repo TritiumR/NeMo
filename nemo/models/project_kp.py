@@ -99,7 +99,7 @@ class PackedRaster():
 
         if raster_type == 'near' or raster_type == 'triangle':
             raster_setting = RasterizationSettings(image_size=feature_size,
-                                                   blur_radius=raster_configs.get('blur_radius', 0.0), bin_size=0)
+                                                   blur_radius=raster_configs.get('blur_radius', 0.0), bin_size=0) # attention !!!
             self.raster = MeshRasterizer(raster_settings=raster_setting, cameras=cameras)
 
             if isinstance(object_mesh, Meshes):
@@ -141,37 +141,35 @@ class PackedRaster():
                 this_cameras._N = R.shape[0]
                 this_cameras.principal_point = kwargs.get('principal', None).to(self.cameras.device) / self.down_rate
 
-            image = None
-            if kwargs.get('visual', None) is not None:
-                # render config
-                render_image_size = (512, 512)
-
-                raster_settings = RasterizationSettings(
-                    image_size=render_image_size,
-                    blur_radius=0.0,
-                    faces_per_pixel=1,
-                    bin_size=0
-                )
-                # We can add a point light in front of the object.
-                lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
-
-                # prepare camera
-                cameras = PerspectiveCameras(focal_length=1.0 * 3200,
-                                             principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
-                                             image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
-
-                phong_renderer = MeshRenderer(
-                    rasterizer=MeshRasterizer(
-                        cameras=cameras,
-                        raster_settings=raster_settings
-                    ),
-                    shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
-                )
-
-                meshes_update = self.meshes
-
-                image = phong_renderer(meshes_world=meshes_update.clone(), R=R, T=T)
-                image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+            # image = None
+            # if kwargs.get('visual', None) is not None:
+            #     # render config
+            #     render_image_size = (512, 512)
+            #
+            #     raster_settings = RasterizationSettings(
+            #         image_size=render_image_size,
+            #         blur_radius=0.0,
+            #         faces_per_pixel=1,
+            #         bin_size=0
+            #     )
+            #     # We can add a point light in front of the object.
+            #     lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
+            #
+            #     # prepare camera
+            #     cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+            #                                  principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+            #                                  image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+            #
+            #     phong_renderer = MeshRenderer(
+            #         rasterizer=MeshRasterizer(
+            #             cameras=cameras,
+            #             raster_settings=raster_settings
+            #         ),
+            #         shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
+            #     )
+            #
+            #     image = phong_renderer(meshes_world=self.meshes.clone(), R=R, T=T)
+            #     image = image[0, ..., :3].detach().squeeze().cpu().numpy()
 
             return get_one_standard(self.raster, this_cameras, self.meshes,  **kwargs,
                                     **self.kwargs) # + (image,)
@@ -298,9 +296,6 @@ class PackedRaster():
         image_list = []
         idx = 0
         for part_id, part_vert in enumerate(part_verts):
-            # print('idx: ', idx)
-            if part_id == 4 or part_id == 6:
-                continue
             offset = part_pose['offset'][idx][None]
             azimuth = part_pose['azimuth'][idx]
             elevation = part_pose['elevation'][idx]
@@ -338,10 +333,11 @@ class PackedRaster():
         img = img.permute(1, 2, 0).numpy()
 
         mixed_image = np.zeros_like(img)
+        weight = 1. / len(image_list)
         for image in image_list:
-            mixed_image += image * 0.6
+            mixed_image += image * 2 * weight
 
-        mixed_image = ((mixed_image * 0.6 + img * 0.4) * 255).astype(np.uint8)
+        mixed_image = ((mixed_image * (1 - weight) + img * weight) * 255).astype(np.uint8)
         # clip the rgb value
         mixed_image = np.clip(mixed_image, 0, 255)
         mixed_image = Image.fromarray(mixed_image)

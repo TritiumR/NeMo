@@ -22,6 +22,13 @@ class MeshLoader():
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
             cate_id = '02958343'
             chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+        elif cate == 'aeroplane':
+            self.skip_list = []
+            self.ray_list = []
+            cate_id = '02691156'
+            chosen_id = '3cb63efff711cfc035fc197bbabcd5bd'
+        else:
+            raise NotImplementedError
 
         images_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
         index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id)
@@ -99,6 +106,11 @@ class PartLoader():
         if cate == 'car':
             chosen_id = '4d22bfe3097f63236436916a86a90ed7'
             cate_id = '02958343'
+        elif cate == 'aeroplane':
+            cate_id = '02691156'
+            chosen_id = '3cb63efff711cfc035fc197bbabcd5bd'
+        else:
+            raise NotImplementedError
 
         # load chosen mesh
         ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
@@ -120,8 +132,6 @@ class PartLoader():
             part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
             part_verts = part_verts - part_middle
             self.offsets.append(np.array(part_middle))
-            # vert_middle = (part_verts.max(axis=0) + part_verts.min(axis=0)) / 2
-            # part_verts = part_verts - vert_middle
             self.part_meshes.append((part_verts, part_faces))
             self.part_names.append(name.split('.')[0])
 
@@ -147,20 +157,26 @@ class SyntheticShapeNet(Dataset):
         self.root_path = get_abs_path(root_path)
         self.data_camera_mode = data_camera_mode
 
-        cat_off = dict()
-        cat_off['car'] = "02958343"
         if self.category == 'car':
             self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
             self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
+            cate_id = '02958343'
+        elif self.category == 'aeroplane':
+            self.skip_list= []
+            self.ray_list = []
+            cate_id = '02691156'
+        else:
+            raise NotImplementedError
 
         self.img_path = os.path.join(self.root_path, 'image', self.data_type, self.category)
         self.render_img_path = os.path.join(self.root_path, 'render_img', self.data_type, self.category)
         self.angle_path = os.path.join(self.root_path, 'angle', self.data_type, self.category)
         self.mesh_path = os.path.join(self.root_path, 'mesh', self.category)
-        self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cat_off[self.category])
+        self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cate_id)
 
         self.instance_list = [x for x in os.listdir(self.img_path) if '.' not in x]
+        # self.instance_list = ['4d22bfe3097f63236436916a86a90ed7']
 
         self.img_fns = []
         self.angle_fns = []
@@ -213,14 +229,6 @@ class SyntheticShapeNet(Dataset):
 
         instance_id = self.img_fns[item].split('/')[-2]
 
-        # verts, faces = self.get_meshes()
-
-        # faces_pad = torch.zeros((self.max_faces, 3), dtype=torch.int32)
-        # faces_pad[:faces.shape[0], :] = faces
-
-        # verts_pad = torch.zeros((self.max_verts, 3), dtype=torch.float32)
-        # verts_pad[:verts.shape[0], :] = verts
-
         img = ori_img.transpose(2, 0, 1)
         mask = render_img[:, :, 3]
         mask = cv2.resize(mask, (img.shape[2], img.shape[1]), interpolation=cv2.INTER_NEAREST)
@@ -240,21 +248,12 @@ class SyntheticShapeNet(Dataset):
         sample['img_ori'] = np.ascontiguousarray(img).astype(np.float32)
         sample['obj_mask'] = np.ascontiguousarray(mask).astype(np.float32)
 
-        # sample['verts'] = verts_pad
-        # sample['verts_len'] = verts.shape[0]
-        # sample['faces'] = faces_pad
-        # sample['faces_len'] = faces.shape[0]
         sample['distance'] = distance
         sample['elevation'] = elevation
         sample['azimuth'] = azimuth
         sample['theta'] = theta
         sample['instance_id'] = instance_id
         sample['this_name'] = item
-        
-
-        # if self.data_type == 'train':
-        #     index = np.load(os.path.join(self.index_path, instance_id, 'index.npy'), allow_pickle=True)[()]
-        #     sample['index'] = index
 
         return sample
 

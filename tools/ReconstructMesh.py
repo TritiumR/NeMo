@@ -13,7 +13,7 @@ if cat_type == 'car':
 elif cat_type == 'plane':
     imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/aeroplane'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02691156/ply'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
+    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/aeroplane'
 else:
     raise NotImplementedError
 

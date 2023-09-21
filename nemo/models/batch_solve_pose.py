@@ -4,7 +4,7 @@
 # Support 3D pose as NeMo and VoGE-NeMo, 
 # Not support 6D pose in current version
 
-
+import os
 import numpy as np
 import torch
 from pytorch3d.renderer import camera_position_from_spherical_angles
@@ -24,7 +24,7 @@ if not enable_voge:
     from TorchBatchifier import Batchifier
 
 
-def loss_fg_only(obj_s, clu_s=None, reduce_method=lambda x: torch.mean(x)):
+def loss_fg_only(obj_s, reduce_method=lambda x: torch.mean(x)):
     return torch.ones(1, device=obj_s.device) - reduce_method(obj_s)
 
 
@@ -32,6 +32,10 @@ def loss_fg_bg(obj_s, clu_s, reduce_method=lambda x: torch.mean(x)):
     return torch.ones(1, device=obj_s.device) - (
         reduce_method(torch.max(obj_s, clu_s)) - reduce_method(clu_s)
     )
+
+
+def loss_with_mask(obj_s, mask_s, reduce_method=lambda x: torch.mean(x)):
+    return reduce_method((torch.ones(obj_s.shape, device=obj_s.device) - obj_s) * mask_s)
 
 
 def get_pre_render_samples(inter_module, azum_samples, elev_samples, theta_samples, distance_samples=[5], device='cpu',):
@@ -385,21 +389,29 @@ def solve_part_pose(
     pred = {}
 
     part_scores = []
+    part_masks = []
     start_time = time.time()
     # Step 1: Pre-compute part mask
+    threshold = 0.7
     for part_id in range(len(inter_modules)):
         part_feature = parts_features[part_id].cuda()
-        # normalize
-        # part_feature = part_feature / part_feature.pow(2).sum(-1).pow(.5)[..., None, None]
 
         _score = (
             torch.nn.functional.conv2d(feature_map, part_feature.unsqueeze(2).unsqueeze(3))
             .squeeze(1)
         ).max(dim=1)[0]
 
+        _mask = _score > threshold
+        # visualize mask
+        import matplotlib.pyplot as plt
+        vis_mask = _mask[0].cpu().numpy() * 255
+        plt.imsave(f'./visual/mask_{part_id}.png', vis_mask)
+        # print('mask: ', _mask.shape, _mask.sum())
+
         # print('part score: ', _score.max(), _score.min())
 
         part_scores.append(_score)
+        part_masks.append(_mask)
 
     # use the camera pose estimated from the whole mesh
     cams = []
@@ -418,8 +430,6 @@ def solve_part_pose(
 
     cams = torch.tensor(np.array(cams), dtype=torch.float32)
     thetas = torch.tensor(np.array(thetas), dtype=torch.float32)
-    # print('cams.shape: ', cams.shape)
-    # print('thetas.shape: ', thetas.shape)
 
     end_time = time.time()
     pred["pre_compute_time"] = end_time - start_time
@@ -433,19 +443,16 @@ def solve_part_pose(
     azimuth_preds = []
     elevation_preds = []
     for part_id, inter_module in enumerate(inter_modules):
-        if part_id == 4 or part_id == 6:
-            continue
         initial_azimuth = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
         initial_elevation = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
         initial_offset = torch.from_numpy(initial_offsets[part_id].astype(np.float32)).repeat(b, 1)
         initial_scale = torch.ones(b)
-        azimuths = torch.nn.Parameter(initial_azimuth, requires_grad=True)
-        elevations = torch.nn.Parameter(initial_elevation, requires_grad=True)
+        azimuths = torch.nn.Parameter(initial_azimuth, requires_grad=False)
+        elevations = torch.nn.Parameter(initial_elevation, requires_grad=False)
         offsets = torch.nn.Parameter(initial_offset, requires_grad=True)
-        # print('out offsets: ', offsets)
         scales = torch.nn.Parameter(initial_scale, requires_grad=False)
 
-        optim = construct_class_by_name(**cfg.inference.optimizer, params=[azimuths, elevations, offsets, scales])
+        optim = construct_class_by_name(**cfg.inference.part_optimizer, params=[azimuths, elevations, offsets, scales])
 
         scheduler_kwargs = {"optimizer": optim}
         scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
@@ -456,7 +463,7 @@ def solve_part_pose(
         # print('rotates: ', rotates)
         # print('name: ', cams)
         # print('inter_module: ', inter_module)
-        for epo in range(cfg.inference.epochs):
+        for epo in range(cfg.inference.part_epochs):
             # break
             # [b, c, h, w]
             projected_map = inter_module(
@@ -469,11 +476,9 @@ def solve_part_pose(
 
             # [b, c, h, w] -> [b, h, w]
             object_score = torch.sum(projected_map * feature_map, dim=1)
-            loss = loss_fg_bg(object_score, 0 - part_scores[part_id])
-            # import ipdb
-            # ipdb.set_trace()
+            # loss = loss_fg_bg(object_score, 1 - part_scores[part_id])
             # loss = loss_fg_only(object_score)
-
+            loss = loss_with_mask(object_score, part_masks[part_id])
             loss.backward()
             optim.step()
             optim.zero_grad()
@@ -506,3 +511,162 @@ def solve_part_pose(
         preds.append(dict(final=refined, **{k: pred[k] / b for k in pred.keys()}))
 
     return preds
+
+
+def loss_curve_part(
+        cfg,
+        feature_map,
+        inter_modules,
+        parts_features,
+        initial_poses,
+        initial_offsets,
+):
+    b, c, hm_h, hm_w = feature_map.size()
+
+    part_scores = []
+    part_masks = []
+    # Step 1: Pre-compute part mask
+    threshold = 0.8
+    for part_id in range(len(inter_modules)):
+        part_feature = parts_features[part_id].cuda()
+
+        _score = (
+            torch.nn.functional.conv2d(feature_map, part_feature.unsqueeze(2).unsqueeze(3))
+            .squeeze(1)
+        ).max(dim=1)[0]
+
+        _mask = _score > threshold
+
+        part_scores.append(_score)
+        part_masks.append(_mask)
+
+    # use the camera pose estimated from the whole mesh
+    cams = []
+    thetas = []
+    for batch_id in range(b):
+        azum = initial_poses['azimuth'][batch_id]
+        elev = initial_poses['elevation'][batch_id]
+        theta = initial_poses['theta'][batch_id]
+        # print('azum: ', azum, 'elev: ', elev, 'theta: ', theta)
+        distance = initial_poses['distance'][batch_id]
+
+        c = camera_position_from_spherical_angles(distance, elev, azum, degrees=False)
+        cams.append(c[0])
+        thetas.append(theta.cpu())
+
+    cams = torch.tensor(np.array(cams), dtype=torch.float32)
+    thetas = torch.tensor(np.array(thetas), dtype=torch.float32)
+
+    # Step 2: draw loss curve by taking steps
+    import matplotlib.pyplot as plt
+    for part_id, inter_module in enumerate(inter_modules):
+        initial_azimuth = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+        initial_elevation = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+        initial_offset = torch.from_numpy(initial_offsets[part_id].astype(np.float32)).repeat(b, 1)
+        initial_scale = torch.ones(b)
+
+        azimuths_stride = 0.01
+        elevaions_stride = 0.01
+        offsets_stride = initial_offset * 0.01
+        # print(offsets_stride)
+        scales_stride = initial_scale * 0.01
+
+        azimuth_loss = []
+        elevation_loss = []
+        offset_loss = []
+        scale_loss = []
+        for i in range(300):
+            # azimuth loss curve
+            azimuths = initial_azimuth + (i - 50) * azimuths_stride
+            projected_map = inter_module(
+                cams,
+                thetas,
+                mode=cfg.inference.inter_mode,
+                blur_radius=cfg.inference.blur_radius,
+                part_poses={'offset': initial_offset, 'scale': initial_scale, 'azimuth': azimuths, 'elevation': initial_elevation},
+            )
+
+            object_score = torch.sum(projected_map * feature_map, dim=1)
+            # loss = loss_fg_bg(object_score, 1 - part_scores[part_id])
+            # loss = loss_fg_only(object_score)
+            loss = loss_with_mask(object_score, part_masks[part_id])
+
+            azimuth_loss.append(loss.item())
+
+            # elevation loss curve
+            elevations = initial_elevation + (i - 50) * elevaions_stride
+            projected_map = inter_module(
+                cams,
+                thetas,
+                mode=cfg.inference.inter_mode,
+                blur_radius=cfg.inference.blur_radius,
+                part_poses={'offset': initial_offset, 'scale': initial_scale, 'azimuth': initial_azimuth, 'elevation': elevations},
+            )
+
+            object_score = torch.sum(projected_map * feature_map, dim=1)
+            # loss = loss_fg_bg(object_score, 1 - part_scores[part_id])
+            # loss = loss_fg_only(object_score)
+            loss = loss_with_mask(object_score, part_masks[part_id])
+
+            elevation_loss.append(loss.item())
+
+            # offset loss curve
+            offsets = initial_offset + (i - 50) * offsets_stride
+            projected_map = inter_module(
+                cams,
+                thetas,
+                mode=cfg.inference.inter_mode,
+                blur_radius=cfg.inference.blur_radius,
+                part_poses={'offset': offsets, 'scale': initial_scale, 'azimuth': initial_azimuth,
+                            'elevation': initial_elevation},
+            )
+
+            object_score = torch.sum(projected_map * feature_map, dim=1)
+            # loss = loss_fg_bg(object_score, 1 - part_scores[part_id])
+            # loss = loss_fg_only(object_score)
+            loss = loss_with_mask(object_score, part_masks[part_id])
+
+            offset_loss.append(loss.item())
+
+            # scale loss curve
+            scales = initial_scale + (i - 50) * scales_stride
+            projected_map = inter_module(
+                cams,
+                thetas,
+                mode=cfg.inference.inter_mode,
+                blur_radius=cfg.inference.blur_radius,
+                part_poses={'offset': initial_offset, 'scale': scales, 'azimuth': initial_azimuth,
+                            'elevation': initial_elevation},
+            )
+
+            object_score = torch.sum(projected_map * feature_map, dim=1)
+            # loss = loss_fg_bg(object_score, 1 - part_scores[part_id])
+            # loss = loss_fg_only(object_score)
+            loss = loss_with_mask(object_score, part_masks[part_id])
+
+            scale_loss.append(loss.item())
+
+        # draw figure
+        if not os.path.exists('./visual/curve'):
+            os.makedirs('./visual/curve')
+        plt.figure()
+        plt.plot(azimuth_loss)
+        plt.savefig(f'./visual/curve/azimuth_loss_{part_id}.png')
+        plt.close()
+
+        plt.figure()
+        plt.plot(elevation_loss)
+        plt.savefig(f'./visual/curve/elevation_loss_{part_id}.png')
+        plt.close()
+
+        plt.figure()
+        plt.plot(offset_loss)
+        plt.savefig(f'./visual/curve/offset_loss_{part_id}.png')
+        plt.close()
+
+        plt.figure()
+        plt.plot(scale_loss)
+        plt.savefig(f'./visual/curve/scale_loss_{part_id}.png')
+        plt.close()
+
+    return None

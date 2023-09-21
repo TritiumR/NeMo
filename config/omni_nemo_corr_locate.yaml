@@ -54,11 +54,19 @@ inference:
     blur_radius: 0.0
     inter_mode: bilinear
     epochs: 300
+    part_epochs: 1000
     translation_scale: 0.1
 
     optimizer:
         class_name: torch.optim.Adam
         lr: 0.05
+        betas:
+            - 0.4
+            - 0.6
+
+    part_optimizer:
+        class_name: torch.optim.Adam
+        lr: 0.01
         betas:
             - 0.4
             - 0.6
