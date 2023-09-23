@@ -275,3 +275,84 @@ class MeshInterpolateModuleMesh(nn.Module):
         if self.post_process is not None:
             get = self.post_process(get)
         return get
+
+    def forward_whole(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", part_poses=None, **kwargs):
+        meshes = self.meshes
+        face_memory = torch.cat(self.face_memory, dim=0)
+        if self.off_set_mesh:
+            meshes = self.meshes.offset_verts(deform_verts)
+
+        device = meshes.device
+        R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
+        R = R.to(device)
+        T = T.to(device)
+
+        if part_poses is not None:
+            vert_list = []
+            face_list = []
+            for idx in range(len(campos)):
+                offsets = part_poses['offset'][idx]
+                scales = part_poses['scale'][idx]
+                azimuths = part_poses['azimuth'][idx]
+                elevations = part_poses['elevation'][idx]
+                whole_vert = []
+                whole_face = []
+                for part_id in range(len(offsets)):
+                    offset = offsets[part_id][None]
+                    scale = scales[part_id]
+                    azimuth = azimuths[part_id]
+                    elevation = elevations[part_id]
+                    # print('azimuth: ', azimuth, 'elevation: ', elevation)
+                    rotate = rotation_matrix(azimuth, elevation)
+                    rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
+
+                    transform = Transform3d(matrix=rotate.to(device), device=device)
+                    transform = transform.scale(scale.to(device))
+                    transform = transform.translate(offset.to(device))
+
+                    # print('transform done')
+                    verts = meshes[part_id]._verts_list[0]
+                    faces = meshes[part_id]._faces_list[0]
+                    verts = transform.transform_points(verts)
+                    faces = faces + len(whole_vert)
+                    # print('verts: ', verts.shape, verts[0])
+                    # print('faces: ', faces.shape, faces[0], faces.max())
+                    whole_vert.extend(verts)
+                    whole_face.extend(faces)
+
+                whole_vert = torch.stack(whole_vert, dim=0)
+                whole_face = torch.stack(whole_face, dim=0)
+                # print('whole_vert: ', whole_vert.shape)
+                # print('whole_face: ', whole_face.shape)
+                # print('face_max: ', whole_face.max())
+                vert_list.append(whole_vert)
+                face_list.append(whole_face)
+
+            meshes = Meshes(verts=vert_list, faces=face_list).to(meshes.device)
+
+        n_cam = campos.shape[0]
+        if n_cam > 1:
+            get = forward_interpolate(
+                R,
+                T,
+                meshes,
+                face_memory.repeat(n_cam, 1, 1),
+                rasterizer=self.rasterizer,
+                blur_radius=blur_radius,
+                mode=mode,
+            )
+        else:
+            get = forward_interpolate(
+                R,
+                T,
+                meshes,
+                face_memory,
+                rasterizer=self.rasterizer,
+                blur_radius=blur_radius,
+                mode=mode,
+            )
+
+        # print('get: ', get.shape)
+        if self.post_process is not None:
+            get = self.post_process(get)
+        return get

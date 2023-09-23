@@ -16,6 +16,7 @@ from nemo.models.solve_pose import solve_pose
 from nemo.models.batch_solve_pose import get_pre_render_samples, loss_curve_part
 from nemo.models.batch_solve_pose import solve_pose as batch_solve_pose
 from nemo.models.batch_solve_pose import solve_part_pose as batch_solve_part_pose
+from nemo.models.batch_solve_pose import solve_part_whole as batch_solve_part_whole
 from nemo.utils import center_crop_fun
 from nemo.utils import construct_class_by_name
 from nemo.utils import get_param_samples
@@ -335,18 +336,15 @@ class NeMo(BaseModel):
         part_xvert = to_tensor(part_xvert)
         part_xface = to_tensor(part_xface)
 
-        self.part_inter_modules = []
-        for part_id, part_name in enumerate(self.part_loader.get_name_listed()):
-            part_inter_module = MeshInterpolateModule(
-                [part_xvert[part_id]],
-                [part_xface[part_id]],
-                self.feature_bank,
-                rasterizer=rasterizer,
-                post_process=None,
-                interpolate_index=None,
-                features=[self.parts_feature[part_id]],
-            ).to(self.device)
-            self.part_inter_modules.append(part_inter_module)
+        self.part_inter_module = MeshInterpolateModule(
+            part_xvert,
+            part_xface,
+            self.feature_bank,
+            rasterizer=rasterizer,
+            post_process=None,
+            interpolate_index=None,
+            features=self.parts_feature,
+        ).to(self.device)
 
         if self.cfg.task == 'part_locate':
             return
@@ -458,11 +456,6 @@ class NeMo(BaseModel):
         img = sample['img'].cuda()
         ori_img = sample['img_ori'].numpy()
 
-        from PIL import Image
-        # print('shape: ', ori_img[0].shape)
-        img_ = Image.fromarray((ori_img[0].transpose(1, 2, 0) * 255).astype(np.uint8))
-        img_.save(f'./visual/image.png')
-
         mesh_index = [0] * img.shape[0]
 
         kwargs_ = dict(indexs=mesh_index)
@@ -544,19 +537,20 @@ class NeMo(BaseModel):
         # )
 
         # print('part_feature: ', self.parts_feature[0].shape)
-        part_preds = batch_solve_part_pose(
+        part_preds = batch_solve_part_whole(
             self.cfg,
             feature_map,
-            self.part_inter_modules,
+            self.clutter_bank,
+            self.part_inter_module,
             self.parts_feature,
             initial_pose,
             part_offsets,
         )
 
+        part_verts, part_faces = self.part_loader.get_part_mesh()
         for idx in range(len(img)):
-            part_verts, part_faces = self.part_loader.get_part_mesh()
             self.projector.visual_part_pose(part_verts, part_faces, sample['img_ori'][idx], preds[idx]["final"][0],
-                                            part_preds[idx]["final"][0], self.folder, preds[idx]["pose_error"])
+                                            part_preds[idx]["final"], self.folder, preds[idx]["pose_error"])
 
         # exit(0)
 

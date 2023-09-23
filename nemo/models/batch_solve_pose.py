@@ -393,11 +393,9 @@ def solve_part_pose(
     start_time = time.time()
     # Step 1: Pre-compute part mask
     threshold = 0.7
-    for part_id in range(len(inter_modules)):
-        part_feature = parts_features[part_id].cuda()
-
+    for part_feature in parts_features:
         _score = (
-            torch.nn.functional.conv2d(feature_map, part_feature.unsqueeze(2).unsqueeze(3))
+            torch.nn.functional.conv2d(feature_map, part_feature.cuda().unsqueeze(2).unsqueeze(3))
             .squeeze(1)
         ).max(dim=1)[0]
 
@@ -406,9 +404,6 @@ def solve_part_pose(
         import matplotlib.pyplot as plt
         vis_mask = _mask[0].cpu().numpy() * 255
         plt.imsave(f'./visual/mask_{part_id}.png', vis_mask)
-        # print('mask: ', _mask.shape, _mask.sum())
-
-        # print('part score: ', _score.max(), _score.min())
 
         part_scores.append(_score)
         part_masks.append(_mask)
@@ -457,12 +452,6 @@ def solve_part_pose(
         scheduler_kwargs = {"optimizer": optim}
         scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
 
-        # print('paid_id: ', part_id)
-        # print('offsets: ', offsets)
-        # print('scales: ', scales)
-        # print('rotates: ', rotates)
-        # print('name: ', cams)
-        # print('inter_module: ', inter_module)
         for epo in range(cfg.inference.part_epochs):
             # break
             # [b, c, h, w]
@@ -512,6 +501,126 @@ def solve_part_pose(
 
     return preds
 
+
+def solve_part_whole(
+        cfg,
+        feature_map,
+        clutter_bank,
+        inter_module,
+        parts_features,
+        initial_poses,
+        initial_offsets,
+):
+    b, c, hm_h, hm_w = feature_map.size()
+    part_num = len(parts_features)
+    pred = {}
+
+    start_time = time.time()
+
+    # part_scores = []
+    # part_masks = []
+    # # Step 1: Pre-compute part mask
+    # threshold = 0.7
+    # for part_feature in parts_features:
+    #     _score = (
+    #         torch.nn.functional.conv2d(feature_map, part_feature.cuda().unsqueeze(2).unsqueeze(3))
+    #         .squeeze(1)
+    #     ).max(dim=1)[0]
+    #
+    #     _mask = _score > threshold
+    #
+    #     part_scores.append(_score)
+    #     part_masks.append(_mask)
+    clutter_score = None
+    if not isinstance(clutter_bank, list):
+        clutter_bank = [clutter_bank]
+    for cb in clutter_bank:
+        _score = (
+            torch.nn.functional.conv2d(feature_map, cb.unsqueeze(2).unsqueeze(3))
+            .squeeze(1)
+        )
+        if clutter_score is None:
+            clutter_score = _score
+        else:
+            clutter_score = torch.max(clutter_score, _score)
+
+    # use the camera pose estimated from the whole mesh
+    cams = []
+    thetas = []
+    for batch_id in range(b):
+        azum = initial_poses['azimuth'][batch_id]
+        elev = initial_poses['elevation'][batch_id]
+        theta = initial_poses['theta'][batch_id]
+        distance = initial_poses['distance'][batch_id]
+
+        c = camera_position_from_spherical_angles(distance, elev, azum, degrees=False)
+        cams.append(c[0])
+        thetas.append(theta.cpu())
+
+    cams = torch.tensor(np.array(cams), dtype=torch.float32)
+    thetas = torch.tensor(np.array(thetas), dtype=torch.float32)
+
+    end_time = time.time()
+    pred["pre_compute_time"] = end_time - start_time
+
+    # Step 2: Refine part proposals from the whole pose
+    start_time = end_time
+
+    # optimize for whole parts
+    initial_azimuth = torch.zeros((b, part_num))
+    initial_elevation = torch.zeros((b, part_num))
+    initial_offset = torch.from_numpy(np.array(initial_offsets)[None].astype(np.float32)).repeat(b, 1, 1)
+    # print('initial_offset: ', initial_offset.shape)
+    initial_scale = torch.ones((b, part_num))
+    azimuths = torch.nn.Parameter(initial_azimuth, requires_grad=False)
+    elevations = torch.nn.Parameter(initial_elevation, requires_grad=False)
+    offsets = torch.nn.Parameter(initial_offset, requires_grad=True)
+    scales = torch.nn.Parameter(initial_scale, requires_grad=False)
+
+    optim = construct_class_by_name(**cfg.inference.part_optimizer, params=[azimuths, elevations, offsets, scales])
+
+    scheduler_kwargs = {"optimizer": optim}
+    scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
+
+    # print('offsets: ', offsets.shape)
+    # print('scales: ', scales.shape)
+    # print('azimuths: ', azimuths.shape)
+    # print('elevations: ', elevations.shape)
+    # print('cams: ', cams)
+    for epo in range(cfg.inference.part_epochs):
+        projected_map = inter_module.forward_whole(
+            cams,
+            thetas,
+            mode=cfg.inference.inter_mode,
+            blur_radius=cfg.inference.blur_radius,
+            part_poses={'offset': offsets, 'scale': scales, 'azimuth': azimuths, 'elevation': elevations},
+        )
+
+        # [b, c, h, w] -> [b, h, w]
+        object_score = torch.sum(projected_map * feature_map, dim=1)
+        loss = loss_fg_bg(object_score, clutter_score, )
+        # loss = loss_fg_only(object_score)
+        # loss = loss_with_mask(object_score, part_masks[part_id])
+        loss.backward()
+        optim.step()
+        optim.zero_grad()
+
+        if (epo + 1) % (cfg.inference.epochs // 3) == 0:
+            scheduler.step()
+
+    pred["optimization_time"] = end_time - start_time
+
+    preds = []
+    for idx in range(b):
+        refined = {
+            "scale": scales[idx],
+            "offset": offsets[idx],
+            "azimuth": azimuths[idx],
+            "elevation": elevations[idx],
+        }
+        preds.append(dict(final=refined, **{k: pred[k] / b for k in pred.keys()}))
+
+    return preds
 
 def loss_curve_part(
         cfg,

@@ -294,12 +294,11 @@ class PackedRaster():
 
         device = self.cameras.device
         image_list = []
-        idx = 0
         for part_id, part_vert in enumerate(part_verts):
-            offset = part_pose['offset'][idx][None]
-            azimuth = part_pose['azimuth'][idx]
-            elevation = part_pose['elevation'][idx]
-            scale = part_pose['scale'][idx]
+            offset = part_pose['offset'][part_id][None]
+            azimuth = part_pose['azimuth'][part_id]
+            elevation = part_pose['elevation'][part_id]
+            scale = part_pose['scale'][part_id]
 
             rotate = rotation_matrix(azimuth, elevation)
 
@@ -323,8 +322,6 @@ class PackedRaster():
             image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
             image = image[0, ..., :3].detach().squeeze().cpu().numpy()
             image_list.append(image)
-
-            idx += 1
 
         saved_path = './visual/PartPose/' + folder.split('/')[1] + '/' + folder.split('/')[3]
         if not os.path.exists(saved_path):
