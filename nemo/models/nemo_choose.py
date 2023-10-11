@@ -13,7 +13,7 @@ from nemo.models.feature_banks import mask_remove_near, remove_near_vertices_dis
 from nemo.models.mesh_interpolate_module import MeshInterpolateModule
 from nemo.models.solve_pose import pre_compute_kp_coords
 from nemo.models.solve_pose import solve_pose
-from nemo.models.batch_solve_pose import get_pre_render_samples, loss_curve_part
+from nemo.models.batch_solve_pose import get_pre_render_samples, loss_curve_part, batch_only_scale
 from nemo.models.batch_solve_pose import solve_pose as batch_solve_pose
 from nemo.models.batch_solve_pose import solve_part_pose as batch_solve_part_pose
 from nemo.models.batch_solve_pose import solve_part_whole as batch_solve_part_whole
@@ -24,7 +24,7 @@ from nemo.utils import normalize_features
 from nemo.utils import pose_error, iou, pre_process_mesh_pascal, load_off
 from nemo.utils.pascal3d_utils import IMAGE_SIZES
 
-from nemo.datasets.synthetic_shapenet import MeshLoader, PartLoader
+from nemo.datasets.synthetic_shapenet import MeshLoader, PartsLoader
 
 from nemo.models.project_kp import PackedRaster, func_reselect, to_tensor
 # from nemo.lib.MeshUtils import *
@@ -64,7 +64,7 @@ class NeMo(BaseModel):
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
         if mode == 'test':
-            self.folder = cfg.args.checkpoint
+            self.folder = cfg.args.save_dir.split('/')[-1]
         self.ori_mesh = cfg.ori_mesh
 
         if self.ori_mesh:
@@ -74,9 +74,15 @@ class NeMo(BaseModel):
             self.build()
             return
 
-        self.part_loader = PartLoader(self.dataset_config, cate=cate)
+        if cate == 'car':
+            self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+            # self.chosen_ids = ['5edaef36af2826762bf75f4335c3829b', 'e0bf76446d320aa9aa69dfdc5532bb13', 'ea0d722f312d1262e0095a904eb93647',
+            #                    'aeac711326961038939aeffada2c0c5', 'd2064d59beb9f24e8810bd18ea9969c']
+            self.chosen_ids = ['15a5e859e0de30e2afe1d4530f4c6e24', '372ceb40210589f8f500cc506a763c18', '4d22bfe3097f63236436916a86a90ed7',
+                               '560cef57d7fc0969b1bb46d2556ba67d']
+
+        self.parts_loader = PartsLoader(self.dataset_config, cate=cate, chosen_ids=self.chosen_ids)
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
-        self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
         self.build()
 
         self.raster_conf = {
@@ -282,11 +288,11 @@ class NeMo(BaseModel):
             **self.inference_params.raster_settings, image_size=map_shape
         )
         if self.inference_params.rasterizer.class_name == 'VoGE.Renderer.GaussianRenderer':
-            rasterizer = construct_class_by_name(
+            self.rasterizer = construct_class_by_name(
                 **self.inference_params.rasterizer, cameras=cameras, render_settings=raster_settings
             )
         else:
-            rasterizer = construct_class_by_name(
+            self.rasterizer = construct_class_by_name(
                 **self.inference_params.rasterizer, cameras=cameras, raster_settings=raster_settings
             )
 
@@ -304,47 +310,56 @@ class NeMo(BaseModel):
             xvert,
             xface,
             self.feature_bank,
-            rasterizer=rasterizer,
+            rasterizer=self.rasterizer,
             post_process=None,
             interpolate_index=get_mesh_index,
         ).to(self.device)
 
-        # deal with part rendering
-        part_xvert = self.part_loader.get_part_mesh()[0]
-        part_xface = self.part_loader.get_part_mesh()[1]
-        parts_off_set = self.part_loader.get_offset()
+        # load chosen meshes
+        chosen_verts = []
+        chosen_faces = []
+        mesh_indexes = []
+        for chosen_id in self.chosen_ids:
+            if self.ori_mesh:
+                chosen_vert, chosen_face = self.mesh_loader.get_ori_meshes(chosen_id)
+            else:
+                chosen_vert, chosen_face = self.mesh_loader.get_meshes(chosen_id)
+            chosen_verts.append(chosen_vert)
+            chosen_faces.append(chosen_face)
+            mesh_indexes.append(self.mesh_loader.mesh_name_dict[chosen_id])
+            # print('mesh_index: ', mesh_indexes[-1])
+        get_mesh_indexes = self.mesh_loader.get_index_list(mesh_indexes).cuda()
 
-        verts_with_feature = chosen_verts[get_mesh_index[0]]
-
-        # interpolate part features from memory_bank
+        # load parts and compute part features
         self.parts_feature = []
-        kdtree = KDTree(verts_with_feature)
-        for part_vert, off_set in zip(part_xvert, parts_off_set):
-            # print('part_vert: ', part_vert.shape)
-            # print('off_set: ', off_set.shape)
-            part_vert = part_vert + off_set
-            dist, nearest_idx = kdtree.query(part_vert, k=3)
-            dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
-            dist = dist.type(torch.float32)
-            weight = torch.softmax(1 / dist, dim=1)
-            nearest_feature = [self.feature_bank[nearest] for nearest in nearest_idx]
-            part_feature = (torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1)
-            # print('part_feature: ', part_feature.shape)
-            part_feature = part_feature / part_feature.norm(dim=1).unsqueeze(-1)
+        self.parts_xvert = []
+        self.parts_xface = []
+        self.parts_offset = []
+        for idx, chosen_id in enumerate(self.chosen_ids):
+            part_xvert = self.parts_loader.get_part_mesh(chosen_id)[0]
+            part_xface = self.parts_loader.get_part_mesh(chosen_id)[1]
+            part_off_set = self.parts_loader.get_offset(chosen_id)
+
+            verts_with_feature = chosen_verts[idx][get_mesh_indexes[idx]]
+
+            # interpolate part features from memory_bank
+            part_feature = []
+            kdtree = KDTree(verts_with_feature)
+            for part_vert, off_set in zip(part_xvert, part_off_set):
+                part_vert = part_vert + off_set
+                dist, nearest_idx = kdtree.query(part_vert, k=3)
+                dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
+                dist = dist.type(torch.float32)
+                weight = torch.softmax(1 / dist, dim=1)
+                nearest_feature = [self.feature_bank[nearest] for nearest in nearest_idx]
+                feature = (torch.stack(nearest_feature, dim=0) * weight.unsqueeze(-1)).sum(dim=1)
+                feature = feature / feature.norm(dim=1).unsqueeze(-1)
+                part_feature.append(feature)
+
+            self.parts_xvert.append([torch.from_numpy(part_vert) for part_vert in part_xvert])
+            self.parts_xface.append([torch.from_numpy(part_face) for part_face in part_xface])
             self.parts_feature.append(part_feature)
-
-        part_xvert = to_tensor(part_xvert)
-        part_xface = to_tensor(part_xface)
-
-        self.part_inter_module = MeshInterpolateModule(
-            part_xvert,
-            part_xface,
-            self.feature_bank,
-            rasterizer=rasterizer,
-            post_process=None,
-            interpolate_index=None,
-            features=self.parts_feature,
-        ).to(self.device)
+            self.parts_offset.append(part_off_set)
 
         if self.cfg.task == 'part_locate':
             return
@@ -379,7 +394,6 @@ class NeMo(BaseModel):
                 theta_samples=theta_samples,
                 distance_samples=distance_samples,
             )
-        # print('self.feature_pre_rendered: ', self.feature_pre_rendered.shape)
 
         print('build inference done')
 
@@ -524,32 +538,78 @@ class NeMo(BaseModel):
             azimuth=azimuths,
             theta=thetas,
         )
-        part_offsets = self.part_loader.get_offset()
 
-        # # print('names: ', self.part_loader.get_name_listed())
-        # loss_curve_part(
-        #     self.cfg,
-        #     feature_map,
-        #     self.part_inter_modules,
-        #     self.parts_feature,
-        #     initial_pose,
-        #     part_offsets,
-        # )
+        chosen_indexes = []
+        for part_id, part_name in enumerate(self.parts_loader.get_name_listed()):
+            min_loss = 1.
+            min_idx = 0
+            for chosen_idx in range(len(self.chosen_ids)):
+                part_vert = [self.parts_xvert[chosen_idx][part_id]]
+                part_face = [self.parts_xface[chosen_idx][part_id]]
+                part_feature = [self.parts_feature[chosen_idx][part_id]]
+                part_offsets = self.parts_offset[chosen_idx][part_id]
+
+                part_inter_module = MeshInterpolateModule(
+                    part_vert,
+                    part_face,
+                    self.feature_bank,
+                    rasterizer=self.rasterizer,
+                    post_process=None,
+                    interpolate_index=None,
+                    features=part_feature,
+                ).to(self.device)
+
+                loss, scale = batch_only_scale(
+                    self.cfg,
+                    feature_map,
+                    self.clutter_bank,
+                    part_inter_module,
+                    part_feature,
+                    initial_pose,
+                    part_offsets,
+                )
+
+                if loss < min_loss:
+                    min_loss = loss
+                    min_idx = chosen_idx
+
+            chosen_indexes.append(min_idx)
+
+        parts_xvert = [self.parts_xvert[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
+        parts_xface = [self.parts_xface[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
+        parts_feature = [self.parts_feature[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
+        parts_offset = [self.parts_offset[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
+
+        parts_inter_module = MeshInterpolateModule(
+            parts_xvert,
+            parts_xface,
+            self.feature_bank,
+            rasterizer=self.rasterizer,
+            post_process=None,
+            interpolate_index=None,
+            features=parts_feature,
+        ).to(self.device)
 
         # print('part_feature: ', self.parts_feature[0].shape)
         part_preds = batch_solve_part_whole(
             self.cfg,
             feature_map,
             self.clutter_bank,
-            self.part_inter_module,
-            self.parts_feature,
+            parts_inter_module,
+            parts_feature,
             initial_pose,
-            part_offsets,
+            parts_offset,
         )
 
-        part_verts, part_faces = self.part_loader.get_part_mesh()
+        parts_xvert = []
+        parts_xface = []
+        for idx, name in enumerate(self.parts_loader.get_name_listed()):
+            part_vert, part_face = self.parts_loader.get_ori_part(self.chosen_ids[chosen_indexes[idx]], name)
+            parts_xvert.append(part_vert)
+            parts_xface.append(part_face)
+
         for idx in range(len(img)):
-            self.projector.visual_part_pose(part_verts, part_faces, sample['img_ori'][idx], preds[idx]["final"][0],
+            self.projector.visual_part_pose(parts_xvert, parts_xface, sample['img_ori'][idx], preds[idx]["final"][0],
                                             part_preds[idx]["final"], self.folder, preds[idx]["pose_error"])
 
         # exit(0)
@@ -610,7 +670,7 @@ class NeMo(BaseModel):
                     this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=image_shape)
                     imd_list[batch_id].ellipse(this_bbox.pillow_bbox(), fill=((R, G, B)))
 
-        saved_path = self.folder.split('/')[1] + '/' + self.folder.split('/')[3]
+        saved_path = self.folder
         if not os.path.exists(f'./visual/Locate/{saved_path}'):
             os.makedirs(f'./visual/Locate/{saved_path}')
         for img_ in img_list:

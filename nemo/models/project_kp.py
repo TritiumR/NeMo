@@ -251,7 +251,7 @@ class PackedRaster():
         # print('image: ', image.max(), image.min())
         # print('img: ', img.max(), img.min())
 
-        saved_path = './visual/Pose/' + folder.split('/')[1] + '/' + folder.split('/')[3]
+        saved_path = './visual/Pose/' + folder
         if not os.path.exists(saved_path):
             os.makedirs(saved_path)
 
@@ -323,7 +323,7 @@ class PackedRaster():
             image = image[0, ..., :3].detach().squeeze().cpu().numpy()
             image_list.append(image)
 
-        saved_path = './visual/PartPose/' + folder.split('/')[1] + '/' + folder.split('/')[3]
+        saved_path = './visual/PartPose/' + folder
         if not os.path.exists(saved_path):
             os.makedirs(saved_path)
 

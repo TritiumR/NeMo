@@ -30,13 +30,13 @@ class MeshLoader():
         else:
             raise NotImplementedError
 
-        images_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
         index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id)
 
         self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
         self.mesh_name_dict = dict()
-        for name in os.listdir(images_path):
-            if '.' in name or name in self.skip_list:
+        for name in os.listdir(self.mesh_path):
+            name = name.split('_')[0]
+            if name in self.skip_list:
                 continue
             self.mesh_name_dict[name] = len(self.mesh_name_dict)
         if chosen_id not in self.mesh_name_dict:
@@ -48,7 +48,6 @@ class MeshLoader():
 
         if dataset_config.get('ori_mesh', False):
             self.ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id)
-            self.ori_mesh_name_dict = dict()
             self.ori_mesh_list = [self.get_ori_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
             # nearst point
@@ -147,6 +146,89 @@ class PartLoader():
         if name is None:
             return self.offsets
         return self.offsets[self.part_names.index(name)]
+
+
+class PartsLoader():
+    def __init__(self, dataset_config, cate='car', chosen_ids=None):
+        if cate == 'car':
+            cate_id = '02958343'
+        elif cate == 'aeroplane':
+            cate_id = '02691156'
+        else:
+            raise NotImplementedError
+
+        self.parts_meshes = dict()
+        self.parts_offsets = dict()
+        self.part_names = None
+        self.dataset_config = dataset_config
+        self.cate = cate
+
+        for chosen_id in chosen_ids:
+            # load chosen mesh
+            ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
+            chosen_verts, _, _ = load_obj(ori_mesh_path)
+            vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
+
+            # load annotated parts
+            part_meshes = []
+            offsets = []
+            if dataset_config.get('ori_mesh', False):
+                part_path = os.path.join(dataset_config['root_path'], 'ori_parts', cate, chosen_id)
+            else:
+                part_path = os.path.join(dataset_config['root_path'], cate, chosen_id)
+
+            if self.part_names is None:
+                self.part_names = []
+                for name in os.listdir(part_path):
+                    if '.obj' not in name:
+                        continue
+                    part_fn = os.path.join(part_path, name)
+                    part_verts, faces_idx, _ = load_obj(part_fn)
+                    part_faces = faces_idx.verts_idx
+                    part_verts = part_verts - vert_middle
+                    part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
+                    part_verts = part_verts - part_middle
+                    offsets.append(np.array(part_middle))
+                    part_meshes.append((part_verts, part_faces))
+                    self.part_names.append(name.split('.')[0])
+            else:
+                for name in self.part_names:
+                    part_fn = os.path.join(part_path, f'{name}.obj')
+                    part_verts, faces_idx, _ = load_obj(part_fn)
+                    part_faces = faces_idx.verts_idx
+                    part_verts = part_verts - vert_middle
+                    part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
+                    part_verts = part_verts - part_middle
+                    offsets.append(np.array(part_middle))
+                    part_meshes.append((part_verts, part_faces))
+
+            self.parts_meshes[chosen_id] = part_meshes
+            self.parts_offsets[chosen_id] = offsets
+
+    def get_name_listed(self):
+        return self.part_names
+
+    def get_part_mesh(self, id=None, name=None):
+        part_meshes = self.parts_meshes[id]
+        if name is None:
+            return [mesh[0].numpy() for mesh in part_meshes], [mesh[1].numpy() for mesh in part_meshes]
+        return part_meshes[self.part_names.index(name)]
+
+    def get_offset(self, id=None, name=None):
+        offsets = self.parts_offsets[id]
+        if name is None:
+            return offsets
+        return offsets[self.part_names.index(name)]
+
+    def get_ori_part(self, id, name):
+        part_path = os.path.join(self.dataset_config['root_path'], 'ori_parts', self.cate, id)
+        part_fn = os.path.join(part_path, f'{name}.obj')
+        part_vert, faces_idx, _ = load_obj(part_fn)
+        part_face = faces_idx.verts_idx
+        part_middle = (part_vert.max(axis=0)[0] + part_vert.min(axis=0)[0]) / 2
+        part_vert = part_vert - part_middle
+
+        return part_vert.numpy(), part_face.numpy()
 
 
 class SyntheticShapeNet(Dataset):

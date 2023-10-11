@@ -1,8 +1,8 @@
 dataset: config/datasets/DST_shapenet.yaml
-model: config/models/nemo_whole.yaml
+model: config/models/nemo_choose.yaml
 
 task: part_locate_and_rotate
-ori_mesh: True
+ori_mesh: False
 
 training:
     batch_size: 10
@@ -18,7 +18,7 @@ training:
 inference:
     init_mode: 3d_batch
     loss: nemo.models.solve_pose.loss_fg_bg
-    batch_size: 5 # set to 20 for 24GB vmem
+    batch_size: 1 # set to 20 for 24GB vmem
 
     search_translation: false
     optimize_translation: false
@@ -54,6 +54,7 @@ inference:
     blur_radius: 0.0
     inter_mode: bilinear
     epochs: 300
+    scale_epochs: 300
     part_epochs: 1500
     translation_scale: 0.1
 

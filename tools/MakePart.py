@@ -21,7 +21,7 @@ else:
     use_ori = False
 
 if cat_type == 'car':
-    imgs_path = '../data/CorrData/image/test/car'
+    imgs_path = '../data/CorrData/image/train/car'
     recon_path = '../data/CorrData/mesh/car'
     mesh_path = '../data/CorrData/ori_mesh'
     save_path = '../data/CorrData/car'
@@ -34,8 +34,8 @@ elif cat_type == 'plane':
     imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
     recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
     mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
-    save_path = '../visual/SegmentTransfer/plane'
-    ref_path = '../data/CorrData/segment_part/plane'
+    save_path = '../data/CorrData/aeroplane'
+    ref_path = '../data/CorrData/part/aeroplane'
     cate_id = '02691156'
     chosen_id = '1a32f10b20170883663e90eaf6b4ca52'
     index_path = os.path.join('../data/CorrData/index/aeroplane', chosen_id)
@@ -56,6 +56,8 @@ part_names = []
 part_path = os.path.join(ref_path)
 for name in os.listdir(part_path):
     if '.obj' not in name:
+        continue
+    if 'mirror' in name:
         continue
     part_fn = os.path.join(part_path, name)
     part_verts, _, _ = load_obj(part_fn)

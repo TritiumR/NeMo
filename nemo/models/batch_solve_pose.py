@@ -779,3 +779,81 @@ def loss_curve_part(
         plt.close()
 
     return None
+
+
+def batch_only_scale(
+        cfg,
+        feature_map,
+        clutter_bank,
+        inter_module,
+        parts_features,
+        initial_poses,
+        initial_offsets,
+):
+    b, c, hm_h, hm_w = feature_map.size()
+
+    clutter_score = None
+    if not isinstance(clutter_bank, list):
+        clutter_bank = [clutter_bank]
+    for cb in clutter_bank:
+        _score = (
+            torch.nn.functional.conv2d(feature_map, cb.unsqueeze(2).unsqueeze(3))
+            .squeeze(1)
+        )
+        if clutter_score is None:
+            clutter_score = _score
+        else:
+            clutter_score = torch.max(clutter_score, _score)
+
+    # use the camera pose estimated from the whole mesh
+    cams = []
+    thetas = []
+    for batch_id in range(b):
+        azum = initial_poses['azimuth'][batch_id]
+        elev = initial_poses['elevation'][batch_id]
+        theta = initial_poses['theta'][batch_id]
+        # print('azum: ', azum, 'elev: ', elev, 'theta: ', theta)
+        distance = initial_poses['distance'][batch_id]
+
+        c = camera_position_from_spherical_angles(distance, elev, azum, degrees=False)
+        cams.append(c[0])
+        thetas.append(theta.cpu())
+
+    cams = torch.tensor(np.array(cams), dtype=torch.float32)
+    thetas = torch.tensor(np.array(thetas), dtype=torch.float32)
+
+    initial_azimuth = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+    initial_elevation = torch.from_numpy(np.array([0]).astype(np.float32)).repeat(b)
+    initial_offset = torch.from_numpy(initial_offsets.astype(np.float32)).repeat(b, 1)
+    initial_scale = torch.ones(b)
+
+    scales = torch.nn.Parameter(initial_scale, requires_grad=True)
+
+    optim = construct_class_by_name(**cfg.inference.part_optimizer, params=[scales])
+
+    scheduler_kwargs = {"optimizer": optim}
+    scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
+
+    loss = None
+    for epo in range(cfg.inference.scale_epochs):
+        projected_map = inter_module.forward(
+            cams,
+            thetas,
+            mode=cfg.inference.inter_mode,
+            blur_radius=cfg.inference.blur_radius,
+            part_poses={'offset': initial_offset, 'scale': scales, 'azimuth': initial_azimuth, 'elevation': initial_elevation},
+        )
+
+        # [b, c, h, w] -> [b, h, w]
+        object_score = torch.sum(projected_map * feature_map, dim=1)
+        # loss = loss_fg_bg(object_score, clutter_score, )
+        loss = loss_fg_only(object_score)
+        # loss = loss_with_mask(object_score, part_masks[part_id])
+        loss.backward()
+        optim.step()
+        optim.zero_grad()
+
+        if (epo + 1) % (cfg.inference.epochs // 3) == 0:
+            scheduler.step()
+
+    return loss, scales
