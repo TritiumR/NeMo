@@ -135,10 +135,25 @@ def inference_image_part(
         dataloader,
         cached_pred=None
 ):
+    wheel_ious = []
+    mirror_ious = []
+    body_ious = []
     for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
         if cached_pred is None or True:
-            _ = model.evaluate_imagepart(sample)
+            wheel_iou, mirror_iou, body_iou = model.evaluate_imagepart(sample)
+            wheel_ious.append(wheel_iou)
+            mirror_ious.append(mirror_iou)
+            body_ious.append(body_iou)
 
+    wheel_ious = np.array(wheel_ious)
+    mirror_ious = np.array(mirror_ious)
+    body_ious = np.array(body_ious)
+    results = {}
+    results["wheel_iou"] = np.mean(wheel_ious)
+    results["mirror_iou"] = np.mean(mirror_ious)
+    results["body_iou"] = np.mean(body_ious)
+    print('final results: ')
+    print('wheel_iou: ', results["wheel_iou"], '  mirror_iou: ', results["mirror_iou"], '  body_iou: ', results["body_iou"])
     return None
 
 
