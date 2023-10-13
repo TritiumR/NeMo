@@ -1,0 +1,6 @@
+name: image_part
+class_name: nemo.datasets.image_part.ImagePart
+root_path: data/CorrData/
+
+num_verts: 3072
+image_sizes: 512

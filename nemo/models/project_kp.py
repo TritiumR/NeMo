@@ -298,17 +298,20 @@ class PackedRaster():
             offset = part_pose['offset'][part_id][None]
             azimuth = part_pose['azimuth'][part_id]
             elevation = part_pose['elevation'][part_id]
-            scale = part_pose['scale'][part_id]
+            xscale = part_pose['xscale'][part_id]
+            yscale = part_pose['yscale'][part_id]
+            zscale = part_pose['zscale'][part_id]
 
             rotate = rotation_matrix(azimuth, elevation)
 
-            # print('offset: ', offset)
-            # print('rotate: ', rotate)
-            # print('scale: ', scale)
-
-            rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
-            transform = Transform3d(matrix=rotate.to(device), device=device)
-            transform = transform.scale(scale.to(device))
+            # # print('offset: ', offset)
+            # # print('rotate: ', rotate)
+            # # print('scale: ', scale)
+            #
+            # rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
+            transform = Transform3d(device=device)
+            transform = transform.scale(x=xscale.to(device), y=yscale.to(device), z=zscale.to(device))
+            transform = transform.rotate(rotate.to(device))
             transform = transform.translate(offset.to(device))
 
             part_vert = transform.transform_points(torch.from_numpy(part_vert).to(device))
@@ -339,6 +342,102 @@ class PackedRaster():
         mixed_image = np.clip(mixed_image, 0, 255)
         mixed_image = Image.fromarray(mixed_image)
         mixed_image.save(os.path.join(saved_path, f'error{np.array(error).mean():.4f}.jpg'))
+
+    def get_segment(self, part_verts, part_faces, pose, part_pose, part_names):
+        render_image_size = (512, 512)
+
+        raster_settings = RasterizationSettings(
+            image_size=render_image_size,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+            bin_size=0
+        )
+        # lights = AmbientLights(device=self.cameras.device)
+
+        # prepare camera
+        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+                                     principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+                                     image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+
+        # phong_renderer = MeshRenderer(
+        #     rasterizer=MeshRasterizer(
+        #         cameras=cameras,
+        #         raster_settings=raster_settings
+        #     ),
+        #     shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
+        # )
+
+        distance = pose['distance']
+        elevation = pose['elevation']
+        azimuth = pose['azimuth']
+        theta = pose['theta']
+
+        R, T = look_at_view_transform(distance, elevation, azimuth, device=self.cameras.device, degrees=False)
+        R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
+
+        device = self.cameras.device
+        part_xverts = []
+        part_xfaces = []
+        part_xtexs = []
+        for part_id, part_vert in enumerate(part_verts):
+            offset = part_pose['offset'][part_id][None]
+            azimuth = part_pose['azimuth'][part_id]
+            elevation = part_pose['elevation'][part_id]
+            xscale = part_pose['xscale'][part_id]
+            yscale = part_pose['yscale'][part_id]
+            zscale = part_pose['zscale'][part_id]
+
+
+            rotate = rotation_matrix(azimuth, elevation)
+            # rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
+            transform = Transform3d(device=device)
+            transform = transform.scale(x=xscale.to(device), y=yscale.to(device), z=zscale.to(device))
+            transform = transform.rotate(rotate.to(device))
+            transform = transform.translate(offset.to(device))
+
+            part_vert = transform.transform_points(torch.from_numpy(part_vert).to(device))
+            part_face = torch.from_numpy(part_faces[part_id]).to(device)
+            part_name = part_names[part_id]
+            if 'wheel' in part_name:
+                color = torch.tensor([1, 0, 0])
+            elif 'mirror' in part_name:
+                color = torch.tensor([0, 1, 0])
+            elif 'body' in part_name:
+                color = torch.tensor([0, 0, 1])
+            verts_features = torch.ones_like(part_vert) * color.to(device) # (1, V, 3)
+
+            part_xfaces.extend(part_face + len(part_xverts))
+            part_xverts.extend(part_vert)
+            part_xtexs.extend(verts_features)
+
+        part_xverts = torch.stack(part_xverts, dim=0)
+        part_xfaces = torch.stack(part_xfaces, dim=0)
+        part_xtexs = torch.stack(part_xtexs, dim=0)[None]
+        # print('shapes: ', part_xverts.shape, part_xfaces.shape, part_xtexs.shape)
+        # print('max: ', part_xfaces.max())
+        textures = Textures(verts_features=part_xtexs.to(device))
+
+        mesh = Meshes(verts=[part_xverts], faces=[part_xfaces], textures=textures).to(device)
+
+        rasterizer = MeshRasterizer(
+            cameras=cameras,
+            raster_settings=raster_settings
+        )
+        frag = rasterizer(meshes_world=mesh.clone(), R=R, T=T)
+        face_attr = part_xtexs[0][mesh.faces_packed().long()]
+        get = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_attr).squeeze(0).squeeze(2)
+
+        vis_get = get.clone() * 255
+        vis_get = vis_get.cpu().numpy().astype(np.uint8)
+        vis_get = Image.fromarray(vis_get)
+        vis_get.save('./visual/segment.jpg')
+
+        print('get: ', get.shape)
+
+        # image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
+        # image = image[0, ..., :3].detach().squeeze().cpu().numpy()
+
+        return get
 
 
 def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3,

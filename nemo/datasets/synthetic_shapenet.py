@@ -190,10 +190,13 @@ class PartsLoader():
                     part_verts = part_verts - part_middle
                     offsets.append(np.array(part_middle))
                     part_meshes.append((part_verts, part_faces))
-                    self.part_names.append(name.split('.')[0])
+                    self.part_names.append(name.split('.')[0].split('_')[0])
             else:
                 for name in self.part_names:
-                    part_fn = os.path.join(part_path, f'{name}.obj')
+                    if dataset_config.get('ori_mesh', False):
+                        part_fn = os.path.join(part_path, f'{name}.obj')
+                    else:
+                        part_fn = os.path.join(part_path, f'{name}_recon.obj')
                     part_verts, faces_idx, _ = load_obj(part_fn)
                     part_faces = faces_idx.verts_idx
                     part_verts = part_verts - vert_middle
@@ -319,6 +322,7 @@ class SyntheticShapeNet(Dataset):
         # cv2.imwrite(get_abs_path('visual/mask.png'), vis_mask)
 
         distance = angle['dist']
+        # print('distence: ', distance)
         elevation = np.pi / 2 - angle['phi']
         azimuth = angle['theta'] + np.pi / 2
         theta = angle['camera_rotation']
