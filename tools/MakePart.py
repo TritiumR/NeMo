@@ -24,21 +24,20 @@ if cat_type == 'car':
     imgs_path = '../data/CorrData/image/train/car'
     recon_path = '../data/CorrData/mesh/car'
     mesh_path = '../data/CorrData/ori_mesh'
-    save_path = '../data/CorrData/car'
-    ref_path = '../data/CorrData/part/car'
+    save_path = '../data/CorrData/car2'
+    ref_path = '../data/CorrData/part2/car'
     cate_id = '02958343'
     chosen_id = '4d22bfe3097f63236436916a86a90ed7'
     index_path = os.path.join('../data/CorrData/index/car', chosen_id)
-elif cat_type == 'plane':
-    annos_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Annotations/train/aeroplane'
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
-    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/plane'
-    mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
+elif cat_type == 'aeroplane':
+    imgs_path = '../data/CorrData/image/train/aeroplane'
+    recon_path = '../data/CorrData/mesh/aeroplane'
+    mesh_path = '../data/CorrData/ori_mesh'
     save_path = '../data/CorrData/aeroplane'
     ref_path = '../data/CorrData/part/aeroplane'
     cate_id = '02691156'
-    chosen_id = '1a32f10b20170883663e90eaf6b4ca52'
-    index_path = os.path.join('../data/CorrData/index/aeroplane', chosen_id)
+    chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
+    index_path = os.path.join('../data/CorrData/index/aeroplane', '3cb63efff711cfc035fc197bbabcd5bd')
 else:
     raise ValueError('Wrong type')
 
@@ -56,8 +55,6 @@ part_names = []
 part_path = os.path.join(ref_path)
 for name in os.listdir(part_path):
     if '.obj' not in name:
-        continue
-    if 'mirror' in name:
         continue
     part_fn = os.path.join(part_path, name)
     part_verts, _, _ = load_obj(part_fn)
@@ -137,7 +134,6 @@ for instance_id in instance_ids:
         for idx in range(len(verts)):
             if label[idx] == part_id:
                 part_list[idx] = len(part_list)
-        # print('part_list: ', len(part_list))
         part_verts = verts[label == part_id]
 
         part_faces = []
@@ -146,7 +142,6 @@ for instance_id in instance_ids:
             v1 = v1.item()
             v2 = v2.item()
             v3 = v3.item()
-            # print(v1, v2, v3)
             if v1 in part_list and v2 in part_list and v3 in part_list:
                 face[0] = part_list[v1]
                 face[1] = part_list[v2]

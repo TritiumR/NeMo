@@ -17,8 +17,8 @@ class PascalImagePart(Dataset):
         root_path = os.path.join(root_path, 'pascalimagepart')
         self.root_path = get_abs_path(root_path)
 
-        data_path = os.path.join(root_path, 'train', 'images', category)
-        anno_path = os.path.join(root_path, 'train', 'annotations', category)
+        data_path = os.path.join(root_path, 'images', category)
+        anno_path = os.path.join(root_path, 'annotations', category)
 
         self.images = []
         self.segs = []

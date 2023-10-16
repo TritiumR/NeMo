@@ -127,7 +127,7 @@ if config.cat_type == 'car':
     save_path = '../data/ShapeNet/Preprocess/car'
     chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
 elif config.cat_type == 'plane':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/aeroplane'
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/aeroplane'
     recon_path = '../data/CorrData/mesh/aeroplane'
     ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
     save_path = '../data/ShapeNet/Preprocess/aeroplane'

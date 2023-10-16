@@ -352,20 +352,11 @@ class PackedRaster():
             faces_per_pixel=1,
             bin_size=0
         )
-        # lights = AmbientLights(device=self.cameras.device)
 
         # prepare camera
         cameras = PerspectiveCameras(focal_length=1.0 * 3200,
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
-
-        # phong_renderer = MeshRenderer(
-        #     rasterizer=MeshRasterizer(
-        #         cameras=cameras,
-        #         raster_settings=raster_settings
-        #     ),
-        #     shader=HardPhongShader(device=self.cameras.device, lights=lights, cameras=cameras),
-        # )
 
         distance = pose['distance']
         elevation = pose['elevation']
@@ -398,12 +389,7 @@ class PackedRaster():
             part_vert = transform.transform_points(torch.from_numpy(part_vert).to(device))
             part_face = torch.from_numpy(part_faces[part_id]).to(device)
             part_name = part_names[part_id]
-            if 'wheel' in part_name:
-                color = torch.tensor([1, 0, 0])
-            elif 'mirror' in part_name:
-                color = torch.tensor([0, 1, 0])
-            elif 'body' in part_name:
-                color = torch.tensor([0, 0, 1])
+            color = torch.tensor([1, 0, 0])
             verts_features = torch.ones_like(part_vert) * color.to(device) # (1, V, 3)
 
             part_xfaces.extend(part_face + len(part_xverts))
@@ -413,8 +399,6 @@ class PackedRaster():
         part_xverts = torch.stack(part_xverts, dim=0)
         part_xfaces = torch.stack(part_xfaces, dim=0)
         part_xtexs = torch.stack(part_xtexs, dim=0)[None]
-        # print('shapes: ', part_xverts.shape, part_xfaces.shape, part_xtexs.shape)
-        # print('max: ', part_xfaces.max())
         textures = Textures(verts_features=part_xtexs.to(device))
 
         mesh = Meshes(verts=[part_xverts], faces=[part_xfaces], textures=textures).to(device)
@@ -427,17 +411,103 @@ class PackedRaster():
         face_attr = part_xtexs[0][mesh.faces_packed().long()]
         get = interpolate_face_attributes(frag.pix_to_face, frag.bary_coords, face_attr).squeeze(0).squeeze(2)
 
-        vis_get = get.clone() * 255
-        vis_get = vis_get.cpu().numpy().astype(np.uint8)
-        vis_get = Image.fromarray(vis_get)
-        vis_get.save('./visual/segment.jpg')
-
-        print('get: ', get.shape)
-
-        # image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
-        # image = image[0, ..., :3].detach().squeeze().cpu().numpy()
-
         return get
+
+    def get_segment_depth(self, part_verts, part_faces, pose, part_pose):
+        render_image_size = (512, 512)
+
+        raster_settings = RasterizationSettings(
+            image_size=render_image_size,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+            bin_size=0
+        )
+
+        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+                                     principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
+                                     image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
+
+        rasterizer = MeshRasterizer(
+            cameras=cameras,
+            raster_settings=raster_settings
+        )
+
+        distance = pose['distance']
+        elevation = pose['elevation']
+        azimuth = pose['azimuth']
+        theta = pose['theta']
+
+        R, T = look_at_view_transform(distance, elevation, azimuth, device=self.cameras.device, degrees=False)
+        R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
+
+        # get whole depth
+        device = self.cameras.device
+        part_xverts = []
+        part_xfaces = []
+        part_xverts_list = []
+        part_xfaces_list = []
+        for part_id, part_vert in enumerate(part_verts):
+            offset = part_pose['offset'][part_id][None]
+            azimuth = part_pose['azimuth'][part_id]
+            elevation = part_pose['elevation'][part_id]
+            xscale = part_pose['xscale'][part_id]
+            yscale = part_pose['yscale'][part_id]
+            zscale = part_pose['zscale'][part_id]
+
+            rotate = rotation_matrix(azimuth, elevation)
+            transform = Transform3d(device=device)
+            transform = transform.scale(x=xscale.to(device), y=yscale.to(device), z=zscale.to(device))
+            transform = transform.rotate(rotate.to(device))
+            transform = transform.translate(offset.to(device))
+
+            part_vert = transform.transform_points(torch.from_numpy(part_vert).to(device))
+            part_face = torch.from_numpy(part_faces[part_id]).to(device)
+
+            part_xverts_list.append(part_vert)
+            part_xfaces_list.append(part_face)
+
+            part_xfaces.extend(part_face + len(part_xverts))
+            part_xverts.extend(part_vert)
+
+        part_xverts = torch.stack(part_xverts, dim=0)
+        part_xfaces = torch.stack(part_xfaces, dim=0)
+        part_xtexs = torch.zeros_like(part_xverts)[None]
+        textures = Textures(verts_features=part_xtexs.to(device))
+
+        mesh = Meshes(verts=[part_xverts], faces=[part_xfaces], textures=textures).to(device)
+
+        depth_whole = rasterizer(mesh.clone(), R=R, T=T).zbuf
+        depth_whole = depth_whole[0, ..., 0].detach().squeeze().cpu().numpy()
+
+        depth_image_list = []
+        for part_id, part_vert in enumerate(part_verts):
+            depth_part = np.ones_like(depth_whole) * np.inf
+
+            part_vert = part_xverts_list[part_id]
+            part_face = part_xfaces_list[part_id]
+            part_verts_features = torch.zeros_like(part_vert)[None]
+            part_textures = Textures(verts_features=part_verts_features.to(device))
+
+            part_meshes = Meshes(
+                verts=[part_vert.to(device)],
+                faces=[part_face.to(device)],
+                textures=part_textures
+            )
+
+            part_depth = rasterizer(meshes_world=part_meshes.clone(), R=R, T=T).zbuf
+
+            part_depth_image = part_depth[0, ..., 0].detach().squeeze().cpu().numpy()
+            part_depth_image = np.where(part_depth_image == -1, np.inf, part_depth_image)
+            depth_part = np.minimum(depth_part, part_depth_image)
+            depth_image_list.append(depth_part)
+
+        depth_image_list.append(depth_whole)
+        depth_image_list = np.array(depth_image_list)
+        # print('depth_image_list: ', depth_image_list.shape)
+        seg_mask = np.argmin(depth_image_list, axis=0)
+        # print('seg_mask: ', seg_mask.shape)
+
+        return seg_mask
 
 
 def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to_boundary=True, dist_thr=1e-3,

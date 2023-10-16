@@ -3,7 +3,7 @@ model: config/models/nemo_choose.yaml
 
 task: image_part
 ori_mesh: False
-part_initialization: True
+part_initialization: False
 
 training:
     batch_size: 10
@@ -46,8 +46,8 @@ inference:
         max_pi: 0.1667
         num: 3
     dist_sample:
-        min: 5.491
-        max: 5.491
+        min: 5.0
+        max: 5.0
         num: 1
 
     min_distance: 2

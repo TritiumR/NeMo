@@ -135,25 +135,68 @@ def inference_image_part(
         dataloader,
         cached_pred=None
 ):
-    wheel_ious = []
-    mirror_ious = []
-    body_ious = []
+    if cate == 'car':
+        anno_parts = ['body', 'wheel', 'mirror']
+        body_ious = []
+        wheel_ious = []
+        mirror_ious = []
+    elif cate == 'aeroplane':
+        anno_parts = ['head', 'body', 'engine', 'wing', 'tail']
+        head_ious = []
+        body_ious = []
+        engine_ious = []
+        wing_ious = []
+        tail_ious = []
+
+    mious = []
+
     for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
         if cached_pred is None or True:
-            wheel_iou, mirror_iou, body_iou = model.evaluate_imagepart(sample)
-            wheel_ious.append(wheel_iou)
-            mirror_ious.append(mirror_iou)
-            body_ious.append(body_iou)
+            results = model.evaluate_imagepart(sample)
+            if results is None:
+                continue
+            print('results: ', results)
+            if cate == 'car':
+                body_ious.append(results['body'])
+                wheel_ious.append(results['wheel'])
+                mirror_ious.append(results['mirror'])
+            elif cate == 'aeroplane':
+                head_ious.append(results['head'])
+                body_ious.append(results['body'])
+                engine_ious.append(results['engine'])
+                wing_ious.append(results['wing'])
+                tail_ious.append(results['tail'])
+            mious.append(results['mIoU'])
 
-    wheel_ious = np.array(wheel_ious)
-    mirror_ious = np.array(mirror_ious)
-    body_ious = np.array(body_ious)
-    results = {}
-    results["wheel_iou"] = np.mean(wheel_ious)
-    results["mirror_iou"] = np.mean(mirror_ious)
-    results["body_iou"] = np.mean(body_ious)
-    print('final results: ')
-    print('wheel_iou: ', results["wheel_iou"], '  mirror_iou: ', results["mirror_iou"], '  body_iou: ', results["body_iou"])
+    if cate == 'car':
+        wheel_ious = np.array(wheel_ious)
+        mirror_ious = np.array(mirror_ious)
+        body_ious = np.array(body_ious)
+        results = {}
+        results["wheel_iou"] = np.mean(wheel_ious)
+        results["mirror_iou"] = np.mean(mirror_ious)
+        results["body_iou"] = np.mean(body_ious)
+        results["mIoU"] = np.mean(mious)
+        print('final results: ')
+        print('wheel_iou: ', results["wheel_iou"], '  mirror_iou: ', results["mirror_iou"], '  body_iou: ',
+              results["body_iou"], '  mIoU: ', results["mIoU"])
+    elif cate == 'aeroplane':
+        head_ious = np.array(head_ious)
+        body_ious = np.array(body_ious)
+        engine_ious = np.array(engine_ious)
+        wing_ious = np.array(wing_ious)
+        tail_ious = np.array(tail_ious)
+        results = {}
+        results["head_iou"] = np.mean(head_ious)
+        results["body_iou"] = np.mean(body_ious)
+        results["engine_iou"] = np.mean(engine_ious)
+        results["wing_iou"] = np.mean(wing_ious)
+        results["tail_iou"] = np.mean(tail_ious)
+        results["mIoU"] = np.mean(mious)
+        print('final results: ')
+        print('head_iou: ', results["head_iou"], '  body_iou: ', results["body_iou"], '  engine_iou: ',
+              results["engine_iou"], '  wing_iou: ', results["wing_iou"], '  tail_iou: ', results["tail_iou"],
+              '  mIoU: ', results["mIoU"])
     return None
 
 

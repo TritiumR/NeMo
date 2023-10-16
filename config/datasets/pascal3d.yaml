@@ -1,6 +1,8 @@
 name: pascal3d
 class_name: nemo.datasets.pascal3d.Pascal3DPlus
-root_path: data/PASCAL3D_NeMo
+root_path: data/PASCAL3D_ImagePart
+
+num_verts: 3072
 
 pascal3d_raw_path: data/PASCAL3D+_release1.1
 pascal3d_raw_url: ftp://cs.stanford.edu/cs/cvgl/PASCAL3D+_release1.1.zip
@@ -14,7 +16,7 @@ mesh_path: data/PASCAL3D+_release1.1/CAD_single
 
 pad_texture: false
 single_mesh: true
-training_only: true
+training_only: false
 evaluation_only: false
 augment_by_dist: false
 prepare_mode: first
@@ -24,19 +26,19 @@ skip_3d_anno: false
 occ_level: 0
 occ_levels:
     train: [0]
-    val: [0, 1, 2, 3]
+    val: [0]
 
 image_sizes:
-    aeroplane: [320, 672]
-    bicycle: [608, 608]
-    boat: [384, 672]
+    aeroplane: [512, 512]
+    bicycle: [512, 512]
+    boat: [512, 512]
     bottle: [480, 800]
     bus: [320, 736]
-    chair: [608, 384]
-    car: [256, 672]
+    chair: [512, 512]
+    car: [512, 512]
     diningtable: [384, 800]
     motorbike: [512, 512]
-    sofa: [352, 736]
+    sofa: [512, 512]
     train: [256, 608]
     tvmonitor: [480, 448]
 

@@ -15,32 +15,40 @@ import os
 
 
 class MeshLoader():
-    def __init__(self, dataset_config, cate='car', type='train'):
+    def __init__(self, dataset_config, cate='car', type=None):
         if cate == 'car':
             self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
             self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
                              '67a3dfa9fb2d1f2bbda733a39f84326d']
             cate_id = '02958343'
             chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+            chosen_id1 = None
         elif cate == 'aeroplane':
             self.skip_list = []
-            self.ray_list = []
+            self.up_list = ['1d63eb2b1f78aa88acf77e718d93f3e1']
             cate_id = '02691156'
             chosen_id = '3cb63efff711cfc035fc197bbabcd5bd'
+            chosen_id1 = '1d63eb2b1f78aa88acf77e718d93f3e1'
         else:
             raise NotImplementedError
 
         index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id)
 
         self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
+        name_path = self.mesh_path
+        if type is not None:
+            img_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
+            name_path = img_path
         self.mesh_name_dict = dict()
-        for name in os.listdir(self.mesh_path):
+        for name in os.listdir(name_path):
             name = name.split('_')[0]
-            if name in self.skip_list:
+            if name in self.skip_list or '.' in name:
                 continue
             self.mesh_name_dict[name] = len(self.mesh_name_dict)
         if chosen_id not in self.mesh_name_dict:
             self.mesh_name_dict[chosen_id] = len(self.mesh_name_dict)
+        if chosen_id1 is not None and chosen_id1 not in self.mesh_name_dict:
+            self.mesh_name_dict[chosen_id1] = len(self.mesh_name_dict)
         self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
         self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
@@ -175,7 +183,7 @@ class PartsLoader():
             if dataset_config.get('ori_mesh', False):
                 part_path = os.path.join(dataset_config['root_path'], 'ori_parts', cate, chosen_id)
             else:
-                part_path = os.path.join(dataset_config['root_path'], cate, chosen_id)
+                part_path = os.path.join(dataset_config['root_path'], f'{cate}', chosen_id)
 
             if self.part_names is None:
                 self.part_names = []

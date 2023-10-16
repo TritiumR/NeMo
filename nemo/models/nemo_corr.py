@@ -60,7 +60,7 @@ class NeMo(BaseModel):
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
         if mode == 'test':
-            self.folder = cfg.args.checkpoint
+            self.folder = cfg.args.save_dir.split('/')[-1]
         self.avg_mesh = cfg.inference.avg_mesh
         self.ori_mesh = cfg.ori_mesh
 
@@ -70,6 +70,16 @@ class NeMo(BaseModel):
         if cfg.task == 'correlation_marking':
             self.build()
             return
+
+        if cate == 'car':
+            self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
+            # self.chosen_ids = ['5edaef36af2826762bf75f4335c3829b', 'e0bf76446d320aa9aa69dfdc5532bb13', 'ea0d722f312d1262e0095a904eb93647',
+            #                    'aeac711326961038939aeffada2c0c5', 'd2064d59beb9f24e8810bd18ea9969c']
+            self.chosen_ids = ['15a5e859e0de30e2afe1d4530f4c6e24', '372ceb40210589f8f500cc506a763c18', '4d22bfe3097f63236436916a86a90ed7',
+                               '560cef57d7fc0969b1bb46d2556ba67d']
+        elif cate == 'aeroplane':
+            self.chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
+            self.chosen_ids = ['1d63eb2b1f78aa88acf77e718d93f3e1', ]
 
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
         self.build()
@@ -378,7 +388,7 @@ class NeMo(BaseModel):
         img = sample['img'].cuda()
 
         if self.avg_mesh:
-            mesh_index = [self.mesh_loader.mesh_name_dict['5edaef36af2826762bf75f4335c3829b']] * len(img)
+            mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]] * len(img)
         else:
             mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
 

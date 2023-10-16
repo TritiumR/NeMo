@@ -55,7 +55,7 @@ inference:
     inter_mode: bilinear
     epochs: 300
     scale_epochs: 300
-    part_epochs: 1500
+    part_epochs: 500
     translation_scale: 0.1
 
     optimizer:

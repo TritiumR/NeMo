@@ -229,14 +229,17 @@ class MeshInterpolateModuleMesh(nn.Module):
             face_list = []
             for idx in range(len(campos)):
                 offset = part_poses['offset'][idx][None]
-                scale = part_poses['scale'][idx]
+                xscale = part_poses['xscale'][idx]
+                yscale = part_poses['yscale'][idx]
+                zscale = part_poses['zscale'][idx]
                 azimuth = part_poses['azimuth'][idx]
                 elevation = part_poses['elevation'][idx]
                 rotate = rotation_matrix(azimuth, elevation)
-                rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
 
-                transform = Transform3d(matrix=rotate.to(device), device=device)
-                transform = transform.scale(scale.to(device))
+                # transform = Transform3d(matrix=rotate.to(device), device=device)
+                transform = Transform3d(device=device)
+                transform = transform.scale(x=xscale.to(device), y=yscale.to(device), z=zscale.to(device))
+                transform = transform.rotate(rotate.to(device))
                 transform = transform.translate(offset.to(device))
 
                 # print('transform done')
@@ -250,6 +253,7 @@ class MeshInterpolateModuleMesh(nn.Module):
             # exit(0)
 
         n_cam = campos.shape[0]
+        # print('n_cam: ', n_cam)
         if n_cam > 1:
             get = forward_interpolate(
                 R,
@@ -276,6 +280,51 @@ class MeshInterpolateModuleMesh(nn.Module):
             get = self.post_process(get)
         return get
 
+    def forward_seperate(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", **kwargs):
+        gets = []
+        for index in range(len(self.meshes._verts_list)):
+            verts_ = [self.meshes._verts_list[index]]
+            faces_ = [self.meshes._faces_list[index]]
+            meshes = Meshes(verts=verts_, faces=faces_).to(self.meshes.device)
+            face_memory = torch.cat([self.face_memory[index]], dim=0)
+            if self.off_set_mesh:
+                meshes = self.meshes.offset_verts(deform_verts)
+
+            device = meshes.device
+            R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
+            R = R.to(device)
+            T = T.to(device)
+
+            n_cam = campos.shape[0]
+            if n_cam > 1:
+                get = forward_interpolate(
+                    R,
+                    T,
+                    meshes,
+                    face_memory.repeat(n_cam, 1, 1),
+                    rasterizer=self.rasterizer,
+                    blur_radius=blur_radius,
+                    mode=mode,
+                )
+            else:
+                get = forward_interpolate(
+                    R,
+                    T,
+                    meshes,
+                    face_memory,
+                    rasterizer=self.rasterizer,
+                    blur_radius=blur_radius,
+                    mode=mode,
+                )
+
+            gets.append(get)
+
+        gets = torch.stack(gets, dim=0)
+        # print('gets: ', gets.shape)
+        if self.post_process is not None:
+            gets = self.post_process(gets)
+        return gets
+
     def forward_whole(self, campos, theta, blur_radius=0, deform_verts=None, mode="bilinear", part_poses=None, **kwargs):
         meshes = self.meshes
         face_memory = torch.cat(self.face_memory, dim=0)
@@ -292,22 +341,27 @@ class MeshInterpolateModuleMesh(nn.Module):
             face_list = []
             for idx in range(len(campos)):
                 offsets = part_poses['offset'][idx]
-                scales = part_poses['scale'][idx]
+                xscales = part_poses['xscale'][idx]
+                # print('xscales: ', xscales)
+                yscales = part_poses['yscale'][idx]
+                zscales = part_poses['zscale'][idx]
                 azimuths = part_poses['azimuth'][idx]
                 elevations = part_poses['elevation'][idx]
                 whole_vert = []
                 whole_face = []
                 for part_id in range(len(offsets)):
                     offset = offsets[part_id][None]
-                    scale = scales[part_id]
+                    xscale = xscales[part_id]
+                    yscale = yscales[part_id]
+                    zscale = zscales[part_id]
                     azimuth = azimuths[part_id]
                     elevation = elevations[part_id]
                     # print('azimuth: ', azimuth, 'elevation: ', elevation)
                     rotate = rotation_matrix(azimuth, elevation)
-                    rotate = torch.cat([torch.cat([rotate, torch.Tensor([0, 0, 0])[:, None]], dim=1), torch.Tensor([0, 0, 0, 1])[None]], dim=0)
 
-                    transform = Transform3d(matrix=rotate.to(device), device=device)
-                    transform = transform.scale(scale.to(device))
+                    transform = Transform3d(device=device)
+                    transform = transform.scale(x=xscale.to(device), y=yscale.to(device), z=zscale.to(device))
+                    transform = transform.rotate(rotate.to(device))
                     transform = transform.translate(offset.to(device))
 
                     # print('transform done')
