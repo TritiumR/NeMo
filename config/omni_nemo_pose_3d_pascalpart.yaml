@@ -1,30 +1,24 @@
-dataset: config/datasets/DST_shapenet.yaml
-model: config/models/nemo_corr.yaml
+dataset: config/datasets/pascalimagepart.yaml
+model: config/models/nemo_runtime.yaml
 
 task: 3d_pose_estimation
-ori_mesh: False
 
 training:
-    batch_size: 30
+    batch_size: 48
     workers: 8
-    total_epochs: 1000
+    total_epochs: 800
     log_interval: 1
-    ckpt_interval: 100
+    ckpt_interval: 200
     visualize_training_data: false
     remove_no_bg: 8
-    visual_kp: False
-    visual_mesh: False
 
 inference:
     init_mode: 3d_batch
     loss: nemo.models.solve_pose.loss_fg_bg
-    batch_size: 6 # set to 20 for 24GB vmem
+    batch_size: 20 # set to 20 for 24GB vmem
 
     search_translation: false
     optimize_translation: false
-
-    visual_pose: False
-    avg_mesh: True
 
     px_sample:
         min: 0.0
@@ -47,9 +41,9 @@ inference:
         max_pi: 0.1667
         num: 3
     dist_sample:
-        min: 5.491
-        max: 5.491
-        num: 1
+        min: 4.0
+        max: 6.0
+        num: 3
 
     min_distance: 2
     pre_rendering_thr: 80

@@ -67,6 +67,7 @@ def train(cfg):
 
     logging.info("Start training")
     for epo in range(cfg.training.total_epochs):
+        # save epoch into a txt file
         num_iterations = int(cfg.training.scale_iterations_per_epoch * len(train_dataloader))
         for i, sample in enumerate(train_dataloader):
             if i >= num_iterations:
@@ -74,6 +75,9 @@ def train(cfg):
             loss_dict = model.train(sample)
             # if cfg.use_wandb:
             #     wandb.log(loss_dict)
+            if i == 0:
+                with open(os.path.join(cfg.args.save_dir, "ckpts", "epoch.txt"), "a") as f:
+                    f.write(str(epo + 1) + ': ' + str(loss_dict['loss']) + '\n')
 
         if (epo + 1) % cfg.training.log_interval == 0:
             logging.info(

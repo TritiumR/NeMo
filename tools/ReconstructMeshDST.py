@@ -5,28 +5,23 @@ import point_cloud_utils as pcu
 import numpy as np
 
 cat_type = input('category type: ')
-mode = input('mode: ')
 
-if cat_type == 'car':
-    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/car'
-    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
-elif cat_type == 'plane':
-    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/aeroplane'
+if cat_type == 'aeroplane':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02690373'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02691156/ply'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/aeroplane'
-elif cat_type == 'boat':
-    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/boat'
+    save_path = '../data/CorrData/DST_part3d/recon/n02690373'
+if cat_type == 'jeep':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03594945'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n03594945'
+if cat_type == 'sailboat':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02981792'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/04530566/ply'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/boat1'
-elif cat_type == 'bicycle':
-    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/bicycle'
-    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02834778/'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/bicycle'
-elif cat_type == 'chair':
-    imgs_path = f'/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/{mode}/chair'
-    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/03001627/ply'
-    save_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/chair'
+    save_path = '../data/CorrData/DST_part3d/recon/n02981792'
+if cat_type == 'police':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03977966'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n03977966'
 else:
     raise NotImplementedError
 
@@ -49,8 +44,6 @@ instance_ids = os.listdir(imgs_path)
 
 idx = 0
 for instance_id in instance_ids:
-    if '.' in instance_id:
-        continue
     if cat_type == 'bicycle':
         point_fn = os.path.join(points_path, f'{instance_id}.points.ply.npy')
         v = np.load(point_fn)
@@ -61,6 +54,9 @@ for instance_id in instance_ids:
         o3d.io.write_triangle_mesh(os.path.join(save_path, f"{instance_id}_recon_mesh.ply"), alpha_mesh)
         continue
     point_fn = os.path.join(points_path, f'{instance_id}.points.ply')
+    if not os.path.exists(point_fn):
+        print('no')
+        continue
     v, _, n, c = pcu.load_mesh_vfnc(point_fn)
     print(v.shape, n.shape)
     pcd = o3d.geometry.PointCloud()

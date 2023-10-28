@@ -264,12 +264,10 @@ class NeMo(BaseModel):
                 **self.inference_params.rasterizer, cameras=cameras, raster_settings=raster_settings
             )
         self.inter_module = MeshInterpolateModule(
-            xvert,
-            xface,
+            [xvert],
+            [xface],
             feature_bank,
             rasterizer=rasterizer,
-            post_process=center_crop_fun(map_shape, (render_image_size,) * 2) if self.inference_params.get('center_crop', False) else None,
-            convert_percentage=self.inference_params.get('convert_percentage', 0.5)
         ).to(self.device)
 
         (
@@ -324,7 +322,7 @@ class NeMo(BaseModel):
                 principal = sample['principal'].float().to(self.device) / self.down_sample_rate
             else:
                 principal = None
-            
+
             preds = batch_solve_pose(
                 self.cfg,
                 feature_map,
@@ -356,13 +354,26 @@ class NeMo(BaseModel):
             )
         if isinstance(preds, dict):
             preds = [preds]
-        
+
         to_print = []
         for i, pred in enumerate(preds):
             if "azimuth" in sample and "elevation" in sample and "theta" in sample:
                 pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]}, pred["final"][0])
                 # print(pred["pose_error"])
                 to_print.append(pred["pose_error"])
+
+        distances = torch.from_numpy(np.array([pred["final"][0]['distance'] for pred in preds]))
+        elevations = torch.from_numpy(np.array([pred["final"][0]['elevation'] for pred in preds]))
+        azimuths = torch.from_numpy(np.array([pred["final"][0]['azimuth'] for pred in preds]))
+        thetas = torch.from_numpy(np.array([pred["final"][0]['theta'] for pred in preds]))
+
+        # save prediction to save_path
+        for idx in range(img.shape[0]):
+            save_path = sample['save_path'][idx]
+            save_path = save_path.replace('.JPEG', '_pose.npz')
+            np.savez(save_path, distance=distances[idx], elevation=elevations[idx], azimuth=azimuths[idx],
+                     theta=thetas[idx])
+            print(save_path)
         print(to_print)
         return preds
 
@@ -449,7 +460,7 @@ class NeMo(BaseModel):
         if 'voge' in self.projector.raster_type:
             with torch.no_grad():
                 frag_ = self.projector(azim=sample['azimuth'].float().cuda(), elev=sample['elevation'].float().cuda(), dist=sample['distance'].float().cuda(), theta=sample['theta'].float().cuda(), **kwargs_)
-  
+
             features, kpvis = self.net.forward(img, keypoint_positions=frag_, obj_mask=1 - obj_mask, do_normalize=True,)
         else:
             if self.training_params.proj_mode == 'prepared':

@@ -33,11 +33,20 @@ elif cat_type == 'aeroplane':
     imgs_path = '../data/CorrData/image/train/aeroplane'
     recon_path = '../data/CorrData/mesh/aeroplane'
     mesh_path = '../data/CorrData/ori_mesh'
-    save_path = '../data/CorrData/aeroplane'
-    ref_path = '../data/CorrData/part/aeroplane'
+    save_path = '../data/CorrData/aeroplane1'
+    ref_path = '../data/CorrData/part2/aeroplane'
     cate_id = '02691156'
-    chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
+    chosen_id = '24c499191b85dd55bf4fc6675b9d12fc'
     index_path = os.path.join('../data/CorrData/index/aeroplane', '3cb63efff711cfc035fc197bbabcd5bd')
+elif cat_type == 'boat':
+    imgs_path = '../data/CorrData/image/train/boat'
+    recon_path = '../data/CorrData/mesh/boat'
+    mesh_path = '../data/CorrData/ori_mesh'
+    save_path = '../data/CorrData/boat1'
+    ref_path = '../data/CorrData/part1/boat'
+    cate_id = '04530566'
+    chosen_id = '2340319ec4d93ae8c1df6b0203ecb359'
+    index_path = os.path.join('../data/CorrData/index/boat', chosen_id)
 else:
     raise ValueError('Wrong type')
 
@@ -65,7 +74,7 @@ print(part_names)
 
 # load reconstructed mesh
 recon_fn = os.path.join(recon_path, f"{chosen_id}_recon_mesh.ply")
-chosen_recon_verts, _, _, _ = pcu.load_mesh_vfnc(recon_fn)
+chosen_recon_verts, chosen_recon_faces, _, _ = pcu.load_mesh_vfnc(recon_fn)
 vert_middle = (chosen_recon_verts.max(axis=0) + chosen_recon_verts.min(axis=0)) / 2
 vert_scale = ((chosen_recon_verts.max(axis=0) - chosen_recon_verts.min(axis=0)) ** 2).sum() ** 0.5
 chosen_recon_verts = chosen_recon_verts - vert_middle
@@ -73,6 +82,7 @@ chosen_recon_verts = chosen_recon_verts / vert_scale
 # load index
 chosen_index = np.load(os.path.join(index_path, chosen_id, 'index.npy'), allow_pickle=True)[()]
 chosen_indexed_verts = chosen_recon_verts[chosen_index]
+# chosen_indexed_verts = chosen_recon_verts
 # nearest part as label
 min_dist = None
 min_idx = None
@@ -87,6 +97,41 @@ for part_id, part_verts in enumerate(parts_verts):
     else:
         min_idx[nearest_dist < min_dist] = part_id
         min_dist = np.minimum(min_dist, nearest_dist)
+
+# instance_path = os.path.join(save_path, f'{chosen_id}')
+# label = min_idx
+# for part_id in range(len(parts_verts)):
+#     print('part_id: ', part_id)
+#     part_list = dict()
+#     for idx in range(len(chosen_recon_verts)):
+#         if label[idx] == part_id:
+#             part_list[idx] = len(part_list)
+#     part_verts = chosen_recon_verts[label == part_id]
+#
+#     part_faces = []
+#     for face in chosen_recon_faces:
+#         v1, v2, v3 = face
+#         v1 = v1.item()
+#         v2 = v2.item()
+#         v3 = v3.item()
+#         if v1 in part_list and v2 in part_list and v3 in part_list:
+#             face[0] = part_list[v1]
+#             face[1] = part_list[v2]
+#             face[2] = part_list[v3]
+#             part_faces.append(face)
+#     part_faces = np.array(part_faces, dtype=np.int32)
+#     print('part_faces: ', part_faces.shape)
+#
+#     # save mesh as obj file
+#     if use_ori:
+#         save_fn = os.path.join(instance_path, f'{part_names[part_id]}_ori.obj')
+#         pytorch3d.io.save_obj(save_fn, part_verts, torch.from_numpy(part_faces))
+#     else:
+#         save_fn = os.path.join(instance_path, f'{part_names[part_id]}_recon.obj')
+#         pytorch3d.io.save_obj(save_fn, torch.from_numpy(part_verts), torch.from_numpy(part_faces))
+#     print('saved chosen')
+#
+# exit(0)
 
 # transfer to different instances
 instance_ids = os.listdir(imgs_path)

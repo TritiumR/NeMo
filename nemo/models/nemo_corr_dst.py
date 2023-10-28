@@ -20,7 +20,7 @@ from nemo.utils import normalize_features
 from nemo.utils import pose_error, iou, pre_process_mesh_pascal, load_off
 from nemo.utils.pascal3d_utils import IMAGE_SIZES
 
-from nemo.datasets.synthetic_shapenet import MeshLoader
+from nemo.datasets.dst_part import MeshLoader
 
 from nemo.models.project_kp import PackedRaster, func_reselect, to_tensor
 # from nemo.lib.MeshUtils import *
@@ -71,16 +71,8 @@ class NeMo(BaseModel):
             self.build()
             return
 
-        if cate == 'car':
-            self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
-        elif cate == 'aeroplane':
-            self.chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
-        elif cate == 'boat':
-            self.chosen_id = '2340319ec4d93ae8c1df6b0203ecb359'
-        elif cate == 'chair':
-            self.chosen_id = '10de9af4e91682851e5f7bff98fb8d02'
-        elif cate == 'bicycle':
-            self.chosen_id = '91k7HKqdM9'
+        if cate == 'aeroplane':
+            self.chosen_id = '22831bc32bd744d3f06dea205edf9704'
 
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
         self.build()
@@ -94,9 +86,9 @@ class NeMo(BaseModel):
         self.net.module.kwargs['n_vert'] = self.num_verts
 
         if self.ori_mesh:
-            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_ori_mesh_listed(), device='cuda')
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_ori_mesh_listed(), device='cuda',)
         else:
-            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda')
+            self.projector = PackedRaster(self.raster_conf, self.mesh_loader.get_mesh_listed(), device='cuda',)
 
     def build(self):
         if self.mode == "train":
@@ -170,18 +162,11 @@ class NeMo(BaseModel):
         #     return im
         # for idx in range(8):
         #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{idx}.png')
-
-        # import ipdb
-        # ipdb.set_trace()
-
-        # print('kp: ', kp.shape)
-        # print('kpvis: ', kpvis.shape)
+        #
+        # exit(0)
+        
         features = self.net.forward(img, keypoint_positions=kp, obj_mask=1 - obj_mask, do_normalize=True,)
 
-        # print('features: ', features.shape)
-
-        # import ipdb
-        # ipdb.set_trace()
         if self.training_params.separate_bank:
             get, y_idx, noise_sim = self.memory_bank(
                 features.to(self.ext_gpu), index.to(self.ext_gpu), kpvis.to(self.ext_gpu)
@@ -199,14 +184,9 @@ class NeMo(BaseModel):
                   'clutter': -math.log(self.training_params.weight_noise)}
         # The default manner in VoGE-NeMo
         if self.training_params.remove_near_mode == 'vert':
-            # vert_ = []
-            # for batch_id in range(img.shape[0]):
-            #     vert_.append(verts[batch_id, order[batch_id]])
-            # vert_ = torch.stack(vert_).cuda()
             with torch.no_grad():
                 verts_ = func_reselect(self.projector.meshes, mesh_index)[1]
                 vert_ = torch.gather(verts_, dim=1, index=get_mesh_index[..., None].expand(-1, -1, 3))
-                # print('vert_: ', vert_.shape)
 
                 vert_dis = (vert_.unsqueeze(1) - vert_.unsqueeze(2)).pow(2).sum(-1).pow(.5)
 
@@ -255,8 +235,6 @@ class NeMo(BaseModel):
         self.loss_trackers['loss'].append(loss.item())
         self.loss_trackers['loss_main'].append(loss_main.item())
         self.loss_trackers['loss_reg'].append(loss_reg.item())
-
-        # print('loss: ', loss.item())
 
         return {'loss': loss.item(), 'loss_main': loss_main.item(), 'loss_reg': loss_reg.item()}
 
@@ -487,10 +465,8 @@ class NeMo(BaseModel):
                 imd = ImageDraw.ImageDraw(img_)
                 x, y = xs[batch_id], ys[batch_id]
                 sim = max_sims[batch_id]
-                # print('similarity: ', sim)
                 if sim < threshold:
                     continue
-                # print('x, y: ', x, y)
                 this_bbox = bbt.box_by_shape((point_size, point_size), (int(x), int(y)), image_boundary=img_.size[::-1])
                 imd.ellipse(this_bbox.pillow_bbox(), fill=(0, 255, 0))
                 img_.save(f'./visual/Corr/{saved_path}/{selected_point}/sim_{sim}.png')

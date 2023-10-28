@@ -1,5 +1,5 @@
-dataset: config/datasets/DST_shapenet.yaml
-model: config/models/nemo_corr.yaml
+dataset: config/datasets/DST_part.yaml
+model: config/models/nemo_corr_dst.yaml
 
 task: 3d_pose_estimation
 ori_mesh: False

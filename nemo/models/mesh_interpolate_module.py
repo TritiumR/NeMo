@@ -332,17 +332,17 @@ class MeshInterpolateModuleMesh(nn.Module):
             meshes = self.meshes.offset_verts(deform_verts)
 
         device = meshes.device
-        R, T = campos_to_R_T(campos, theta, device=campos.device, **kwargs)
+        R, T = campos_to_R_T(campos, theta, device=campos.device)
         R = R.to(device)
         T = T.to(device)
 
+        loss = torch.tensor(0.).to(device)
         if part_poses is not None:
             vert_list = []
             face_list = []
             for idx in range(len(campos)):
                 offsets = part_poses['offset'][idx]
                 xscales = part_poses['xscale'][idx]
-                # print('xscales: ', xscales)
                 yscales = part_poses['yscale'][idx]
                 zscales = part_poses['zscale'][idx]
                 azimuths = part_poses['azimuth'][idx]
@@ -356,7 +356,6 @@ class MeshInterpolateModuleMesh(nn.Module):
                     zscale = zscales[part_id]
                     azimuth = azimuths[part_id]
                     elevation = elevations[part_id]
-                    # print('azimuth: ', azimuth, 'elevation: ', elevation)
                     rotate = rotation_matrix(azimuth, elevation)
 
                     transform = Transform3d(device=device)
@@ -369,18 +368,26 @@ class MeshInterpolateModuleMesh(nn.Module):
                     faces = meshes[part_id]._faces_list[0]
                     verts = transform.transform_points(verts)
                     faces = faces + len(whole_vert)
-                    # print('verts: ', verts.shape, verts[0])
-                    # print('faces: ', faces.shape, faces[0], faces.max())
                     whole_vert.extend(verts)
                     whole_face.extend(faces)
 
                 whole_vert = torch.stack(whole_vert, dim=0)
                 whole_face = torch.stack(whole_face, dim=0)
-                # print('whole_vert: ', whole_vert.shape)
-                # print('whole_face: ', whole_face.shape)
-                # print('face_max: ', whole_face.max())
                 vert_list.append(whole_vert)
                 face_list.append(whole_face)
+
+                if 'near_pairs' in kwargs.keys():
+                    threshold = 0.01
+                    for pair in kwargs['near_pairs']:
+                        id_1 = pair[0]
+                        id_2 = pair[1]
+                        vert_1 = whole_vert[id_1]
+                        vert_2 = whole_vert[id_2]
+                        dist = torch.norm(vert_1 - vert_2)
+                        # print(dist)
+                        if dist > threshold:
+                            # print('dist too large: ', dist)
+                            loss += dist - threshold
 
             meshes = Meshes(verts=vert_list, faces=face_list).to(meshes.device)
 
@@ -409,4 +416,4 @@ class MeshInterpolateModuleMesh(nn.Module):
         # print('get: ', get.shape)
         if self.post_process is not None:
             get = self.post_process(get)
-        return get
+        return get, loss

@@ -64,7 +64,7 @@ def rotation_matrix(azimuth, elevation):
 
 
 class PackedRaster():
-    def __init__(self, raster_configs, object_mesh, mesh_mode='single', device='cpu', ):
+    def __init__(self, raster_configs, object_mesh, mesh_mode='single', device='cpu'):
         """
         raster_configs: dict, include:
                 {
@@ -86,12 +86,13 @@ class PackedRaster():
 
         self.mesh_mode = mesh_mode
         self.kwargs = raster_configs
+        self.focal_length = 3200
 
         image_size = raster_configs.get('image_size')
         feature_size = (
         image_size[0] // raster_configs.get('down_rate'), image_size[1] // raster_configs.get('down_rate'))
         cameras = PerspectiveCameras(
-            focal_length=raster_configs.get('focal_length', 3200) / raster_configs.get('down_rate'),
+            focal_length=raster_configs.get('focal_length', self.focal_length) / raster_configs.get('down_rate'),
             principal_point=((feature_size[1] // 2, feature_size[0] // 2,),), image_size=(feature_size,), in_ndc=False,
             device=device)
         self.cameras = cameras
@@ -99,7 +100,7 @@ class PackedRaster():
 
         if raster_type == 'near' or raster_type == 'triangle':
             raster_setting = RasterizationSettings(image_size=feature_size,
-                                                   blur_radius=raster_configs.get('blur_radius', 0.0), bin_size=0) # attention !!!
+                                                   blur_radius=raster_configs.get('blur_radius', 0.0)) # attention !!!
             self.raster = MeshRasterizer(raster_settings=raster_setting, cameras=cameras)
 
             if isinstance(object_mesh, Meshes):
@@ -221,7 +222,7 @@ class PackedRaster():
         lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+        cameras = PerspectiveCameras(focal_length=self.focal_length,
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -244,7 +245,11 @@ class PackedRaster():
         image = phong_renderer(meshes_world=mesh.clone(), R=R, T=T)
         image = image[0, ..., :3].detach().squeeze().cpu().numpy()
 
-        img = img.permute(1, 2, 0).numpy()
+        if not img.shape[2] == 3:
+            img = img.permute(1, 2, 0).numpy()
+        else:
+            img = (img.numpy() / 255)
+        # print('img: ', img.shape, img.max(), img.min())
 
         # print('image: ', image.shape)
         # print('img: ', img.shape)
@@ -272,7 +277,7 @@ class PackedRaster():
         lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+        cameras = PerspectiveCameras(focal_length=self.focal_length,
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -354,7 +359,7 @@ class PackedRaster():
         )
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+        cameras = PerspectiveCameras(focal_length=self.focal_length,
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -423,7 +428,7 @@ class PackedRaster():
             bin_size=0
         )
 
-        cameras = PerspectiveCameras(focal_length=1.0 * 3200,
+        cameras = PerspectiveCameras(focal_length=self.focal_length,
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -431,11 +436,16 @@ class PackedRaster():
             cameras=cameras,
             raster_settings=raster_settings
         )
-
-        distance = pose['distance']
-        elevation = pose['elevation']
-        azimuth = pose['azimuth']
-        theta = pose['theta']
+        if not isinstance(pose['distance'], float):
+            distance = pose['distance'].float()
+            elevation = pose['elevation'].float()
+            azimuth = pose['azimuth'].float()
+            theta = pose['theta'].float()
+        else:
+            distance = pose['distance']
+            elevation = pose['elevation']
+            azimuth = pose['azimuth']
+            theta = pose['theta']
 
         R, T = look_at_view_transform(distance, elevation, azimuth, device=self.cameras.device, degrees=False)
         R = torch.bmm(R, rotation_theta(theta, device_=self.cameras.device))
@@ -563,15 +573,18 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
     # from PIL import Image, ImageDraw
     # tt = depth_[0] / depth_[0].max()
     # kps = project_verts.cpu().numpy()
-    # point_size=7
+    # point_size = 2
     # def foo(t0, vis_mask_):
     #     im = Image.fromarray((t0.cpu().numpy()[0] * 255).astype(np.uint8)).convert('RGB')
     #     imd = ImageDraw.ImageDraw(im)
     #     for k, vv in zip(kps[0], vis_mask_[0]):
     #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
     #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
-
+    #
     #     return im
+    #
+    # foo(tt, vis_mask).save('temp.png')
+
 
     return project_verts, vis_mask & inner_mask
 

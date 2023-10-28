@@ -15,88 +15,38 @@ import os
 
 
 class MeshLoader():
-    def __init__(self, dataset_config, cate='car', type=None):
-        if cate == 'car':
-            self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
-            self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
-                             '67a3dfa9fb2d1f2bbda733a39f84326d']
-            self.up_list = []
-            cate_id = '02958343'
-            chosen_id = '4d22bfe3097f63236436916a86a90ed7'
-            chosen_id1 = None
+    def __init__(self, dataset_config, cate='aeroplane', type=None):
+        if cate == 'jeep':
+            cate_id = 'n03594945'  # .glb
         elif cate == 'aeroplane':
-            self.skip_list = []
-            self.ray_list = []
-            self.up_list = ['1d63eb2b1f78aa88acf77e718d93f3e1']
-            cate_id = '02691156'
-            chosen_id = '3cb63efff711cfc035fc197bbabcd5bd'
-            chosen_id1 = '1d63eb2b1f78aa88acf77e718d93f3e1'
-        elif cate == 'boat':
-            self.skip_list = []
-            self.ray_list = []
-            self.up_list = []
-            cate_id = '04530566'
-            chosen_id = '2340319ec4d93ae8c1df6b0203ecb359'
-            chosen_id1 = None
-        elif cate == 'chair':
-            self.skip_list = []
-            self.ray_list = []
-            self.up_list = []
-            cate_id = '03001627'
-            chosen_id = '10de9af4e91682851e5f7bff98fb8d02'
-            chosen_id1 = None
+            cate_id = 'n02690373'  # .obj
+            chosen_id = '22831bc32bd744d3f06dea205edf9704'
+        elif cate == 'sailboat':
+            cate_id = 'n02981792'  # .glb
         elif cate == 'bicycle':
-            self.skip_list = ['3ZOy2KonL0']
-            self.ray_list = []
-            self.up_list = []
-            cate_id = '02834778'
-            chosen_id = '91k7HKqdM9'
-            chosen_id1 = None
+            cate_id = 'n02835271'  # .glb .obj
+        elif cate == 'police':
+            cate_id = 'n03977966'
+            chosen_id = '372ceb40210589f8f500cc506a763c18'
         else:
             raise NotImplementedError
 
-        index_path = os.path.join(dataset_config['root_path'], 'index', cate, chosen_id)
+        index_path = os.path.join(dataset_config['root_path'], 'index', cate_id, chosen_id)
 
-        self.mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate)
-        name_path = self.mesh_path
-        if type is not None:
-            img_path = os.path.join(dataset_config['root_path'], 'image', type, cate)
-            name_path = img_path
+        self.mesh_path = os.path.join(dataset_config['root_path'], 'recon', cate_id)
         self.mesh_name_dict = dict()
-        for name in os.listdir(name_path):
+        for name in os.listdir(self.mesh_path):
             name = name.split('_')[0]
-            if name in self.skip_list or '.' in name:
-                continue
             self.mesh_name_dict[name] = len(self.mesh_name_dict)
         if chosen_id not in self.mesh_name_dict:
             self.mesh_name_dict[chosen_id] = len(self.mesh_name_dict)
-        if chosen_id1 is not None and chosen_id1 not in self.mesh_name_dict:
-            self.mesh_name_dict[chosen_id1] = len(self.mesh_name_dict)
         self.mesh_list = [self.get_meshes(name_) for name_ in self.mesh_name_dict.keys()]
 
-        self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in self.mesh_name_dict.keys()]
-        # for idx in range(len(self.index_list)):
-        #     print('index_list: ', self.index_list[idx].shape)
-        #     print('name: ', list(self.mesh_name_dict.keys())[idx])
-
-        if dataset_config.get('ori_mesh', False):
-            self.ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id)
-            self.ori_mesh_list = [self.get_ori_meshes(name_) for name_ in self.mesh_name_dict.keys()]
-
-            # nearst point
-            for idx, index in enumerate(self.index_list):
-                sample_verts = self.mesh_list[idx][0][index]
-                ori_verts = self.ori_mesh_list[idx][0]
-                kdtree = KDTree(ori_verts)
-                _, nearest_idx = kdtree.query(sample_verts, k=1)
-                # print('nearest_idx: ', nearest_idx.shape)
-                self.index_list[idx] = nearest_idx[:, 0]
+        self.index_list = [np.load(os.path.join(index_path, t, 'index.npy'), allow_pickle=True)[()] for t in
+                           self.mesh_name_dict.keys()]
 
     def get_mesh_listed(self):
         return [t[0].numpy() for t in self.mesh_list], [t[1].numpy() for t in self.mesh_list]
-
-    def get_ori_mesh_listed(self):
-        return [t[0].numpy() for t in self.ori_mesh_list], [t[1].numpy() for t in self.ori_mesh_list]
 
     def get_index_list(self, indexs=None):
         if indexs is not None:
@@ -112,84 +62,12 @@ class MeshLoader():
 
         # normalize
         vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
-        if instance_id in self.ray_list:
-            vert_middle[1] += 0.05
-        if instance_id in self.up_list:
-            vert_middle[1] -= 0.08
         vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
         verts = verts - vert_middle
         verts = verts / vert_scale
         verts = torch.from_numpy(verts.astype(np.float32))
-        
-        return verts, faces
-
-    def get_ori_meshes(self, instance_id, ):
-        mesh_fn = os.path.join(self.ori_mesh_path, instance_id, 'models', 'model_normalized.obj')
-        verts, faces_idx, _ = load_obj(mesh_fn)
-        faces = faces_idx.verts_idx
-
-        # normalize
-        vert_middle = (verts.max(dim=0)[0] + verts.min(dim=0)[0]) / 2
-        verts = verts - vert_middle
 
         return verts, faces
-
-
-class PartLoader():
-    def __init__(self, dataset_config, cate='car'):
-        if cate == 'car':
-            chosen_id = '4d22bfe3097f63236436916a86a90ed7'
-            cate_id = '02958343'
-        elif cate == 'aeroplane':
-            cate_id = '02691156'
-            chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
-        elif cate == 'boat':
-            cate_id = '04530566'
-            chosen_id = '2340319ec4d93ae8c1df6b0203ecb359'
-        elif cate == 'chair':
-            cate_id = '03001627'
-            chosen_id = '10de9af4e91682851e5f7bff98fb8d02'
-        elif cate == 'bicycle':
-            cate_id = '02834778'
-            chosen_id = '91k7HKqdM9'
-        else:
-            raise NotImplementedError
-
-        # load chosen mesh
-        ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
-        chosen_verts, _, _ = load_obj(ori_mesh_path)
-        vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
-
-        # load annotated parts
-        self.part_meshes = []
-        self.part_names = []
-        self.offsets = []
-        part_path = os.path.join(dataset_config['root_path'], 'part', cate)
-        for name in os.listdir(part_path):
-            if '.obj' not in name:
-                continue
-            part_fn = os.path.join(part_path, name)
-            part_verts, faces_idx, _ = load_obj(part_fn)
-            part_faces = faces_idx.verts_idx
-            part_verts = part_verts - vert_middle
-            part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
-            part_verts = part_verts - part_middle
-            self.offsets.append(np.array(part_middle))
-            self.part_meshes.append((part_verts, part_faces))
-            self.part_names.append(name.split('.')[0])
-
-    def get_name_listed(self):
-        return self.part_names
-
-    def get_part_mesh(self, name=None):
-        if name is None:
-            return [mesh[0].numpy() for mesh in self.part_meshes], [mesh[1].numpy() for mesh in self.part_meshes]
-        return self.part_meshes[self.part_names.index(name)]
-
-    def get_offset(self, name=None):
-        if name is None:
-            return self.offsets
-        return self.offsets[self.part_names.index(name)]
 
 
 class PartsLoader():
@@ -220,7 +98,8 @@ class PartsLoader():
                 chosen_verts = torch.from_numpy(chosen_verts.astype(np.float32))
             else:
                 # load chosen mesh
-                ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
+                ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models',
+                                             'model_normalized.obj')
                 chosen_verts, _, _ = load_obj(ori_mesh_path)
             vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
             if chosen_id in ['1d63eb2b1f78aa88acf77e718d93f3e1', '3cb63efff711cfc035fc197bbabcd5bd']:
@@ -328,99 +207,75 @@ class PartsLoader():
         return part_vert.numpy(), part_face.numpy()
 
 
-class SyntheticShapeNet(Dataset):
-    def __init__(self, data_type, category, root_path, data_camera_mode='shapnet_car', **kwargs):
+class DSTPartShapeNet(Dataset):
+    def __init__(self, data_type, category, root_path, **kwargs):
         super().__init__()
-        self.data_type = data_type
         self.category = category
         self.root_path = get_abs_path(root_path)
-        self.data_camera_mode = data_camera_mode
 
-        if self.category == 'car':
-            self.skip_list = ['17c32e15723ed6e0cd0bf4a0e76b8df5']
-            self.ray_list = ['85f6145747a203becc08ff8f1f541268', '5343e944a7753108aa69dfdc5532bb13',
-                             '67a3dfa9fb2d1f2bbda733a39f84326d']
-            cate_id = '02958343'
-        elif self.category == 'aeroplane':
-            self.skip_list= []
-            self.ray_list = []
-            cate_id = '02691156'
-        elif self.category == 'boat':
-            self.skip_list = []
-            self.ray_list = []
-            cate_id = '04530566'
-        elif self.category == 'bicycle':
-            self.skip_list = ['3ZOy2KonL0']
-            self.ray_list = []
-            cate_id = '02834778'
-        elif self.category == 'chair':
-            self.skip_list = []
-            self.ray_list = []
-            cate_id = '03001627'
+        if self.category == 'aeroplane':
+            cate_id = 'n02690373'
+            part_list = ['1c27d282735f81211063b9885ddcbb1', '1d96d1c7cfb1085e61f1ef59130c405d',
+                          '1de008320c90274d366b1ebd023111a8', '4ad92be763c2ded8fca1f1143bb6bc17',
+                          '4fbdfec0f9ee078dc1ccec171a275967', '7f2d03635180db2137678474be485ca',
+                          '7f4a0b23f1256c879a6e43b878d5b335', '8adc6a0f45a1ef2e71d03b466c72ce41',
+                          '48bcce07b0baf689d9e6f00e848ea18', '66a32714d2344d1bf52a658ce0ec2c1']
+        elif self.category == 'police':
+            cate_id = 'n03977966'
+            part_list = ['1a7125aefa9af6b6597505fd7d99b613', '45e69263902d77304dde7b6e74a2cede',
+                         '275df71b6258e818597505fd7d99b613', '479f89af38e88bc9715e04edb8af9c53']
+            part_list1 = ['45186c083231f2207b5338996083748c', '511962626501e4abf500cc506a763c18',
+                          '498e4295b3aeca9fefddc097534e4553', '5389c96e84e9e0582b1e8dc2f1faa8cb',
+                          '7492ced6cb6289c556de8db8652eec4e', '9511b5ded804a33f597505fd7d99b613',
+                          'a5d32daf96820ca5f63ee8a34069b7c5', 'e90a136270c03eebaaafd94b9f216ef6']
         else:
             raise NotImplementedError
 
-        self.img_path = os.path.join(self.root_path, 'image', self.data_type, self.category)
-        self.render_img_path = os.path.join(self.root_path, 'render_img', self.data_type, self.category)
-        self.angle_path = os.path.join(self.root_path, 'angle', self.data_type, self.category)
-        self.mesh_path = os.path.join(self.root_path, 'mesh', self.category)
-        self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cate_id)
+        self.cate_path = os.path.join(self.root_path, 'train', cate_id)
+        if data_type == 'train':
+            self.instance_list = [x for x in os.listdir(self.cate_path) if '.' not in x and x not in part_list]
+        if data_type == 'test':
+            self.instance_list = part_list
 
-        self.instance_list = [x for x in os.listdir(self.img_path) if '.' not in x]
+        print('instance_used: ', len(self.instance_list))
 
         self.img_fns = []
         self.angle_fns = []
         self.render_img_fns = []
-        max_verts = 0
-        max_faces = 0
         lambda_fn = lambda x: int(x[:3])
         for instance_id in self.instance_list:
-            if instance_id in self.skip_list:
-                continue
-            img_list = os.listdir(os.path.join(self.img_path, instance_id))
+            img_path = os.path.join(self.cate_path, instance_id, 'image_minigpt4_1008')
+            render_img_path = os.path.join(self.cate_path, instance_id, 'image_render')
+            anno_path = os.path.join(self.cate_path, instance_id, 'annotation')
+            img_list = os.listdir(img_path)
             img_list = sorted(img_list, key=lambda_fn)
-            self.img_fns += [os.path.join(self.img_path, instance_id, x) for x in img_list]
-            angle_list = os.listdir(os.path.join(self.angle_path, instance_id))
+            self.img_fns += [os.path.join(img_path, x) for x in img_list]
+            angle_list = os.listdir(anno_path)
             angle_list = sorted(angle_list, key=lambda_fn)
-            self.angle_fns += [os.path.join(self.angle_path, instance_id, x) for x in angle_list]
-            render_img_list = os.listdir(os.path.join(self.render_img_path, instance_id))
+            self.angle_fns += [os.path.join(anno_path, x) for x in angle_list]
+            render_img_list = os.listdir(render_img_path)
             render_img_list = sorted(render_img_list, key=lambda_fn)
-            self.render_img_fns += [os.path.join(self.render_img_path, instance_id, x) for x in render_img_list]
-
-            # print('img_fns: ', self.img_fns[-1])
-            # print('angle_fns: ', self.angle_fns[-1])
-            # print('render_img_fns: ', self.render_img_fns[-1])
+            self.render_img_fns += [os.path.join(render_img_path, x) for x in render_img_list]
 
             assert len(self.img_fns) == len(self.angle_fns) == len(self.render_img_fns), \
                 f'{len(self.img_fns)}, {len(self.angle_fns)}, {len(self.render_img_fns)}'
-
-            verts, faces, _, _ = pcu.load_mesh_vfnc(os.path.join(self.mesh_path, f'{instance_id}_recon_mesh.ply'))
-            max_verts = max(max_verts, verts.shape[0])
-            max_faces = max(max_faces, faces.shape[0])
-        # print('max_verts: ', max_verts)
-        # print('max_faces: ', max_faces)
-        self.max_verts = max_verts
-        self.max_faces = max_faces
 
     def __getitem__(self, item):
         ori_img = cv2.imread(self.img_fns[item], cv2.IMREAD_UNCHANGED)
         ori_img = cv2.cvtColor(ori_img, cv2.COLOR_BGR2RGB)
         render_img = cv2.imread(self.render_img_fns[item], cv2.IMREAD_UNCHANGED)
-        # ori_img = Image.open(self.img_fns[item]).convert('RGBA')
         ori_img = np.array(ori_img)
         render_img = np.array(render_img)
-        # print('ori_img.shape: ', ori_img.shape)
-        # print('render_img.shape: ', render_img.shape)
         angle = np.load(self.angle_fns[item], allow_pickle=True)[()]
 
-        instance_id = self.img_fns[item].split('/')[-2]
+        instance_id = self.img_fns[item].split('/')[-3]
 
         img = ori_img.transpose(2, 0, 1)
         mask = render_img[:, :, 3]
         mask = cv2.resize(mask, (img.shape[2], img.shape[1]), interpolation=cv2.INTER_NEAREST)
         mask[mask > 0] = 1
-        # vis_mask = mask * 255
-        # cv2.imwrite(get_abs_path('visual/mask.png'), vis_mask)
+        vis_mask = mask * 255
+        cv2.imwrite(get_abs_path('visual/mask.png'), vis_mask)
 
         distance = angle['dist']
         # print('distence: ', distance)

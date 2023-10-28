@@ -587,10 +587,11 @@ def solve_part_whole(
     if 'chosen_offsets' in kwargs.keys():
         chosen_offsets = kwargs['chosen_offsets']
         if len(chosen_offsets) > 0:
-            initial_offset = torch.from_numpy(np.array(chosen_offsets).astype(np.float32)).repeat(b, 1, 1)
+            print('chosen_offsets: ', np.array(chosen_offsets).shape)
+            initial_offset = torch.from_numpy(np.array(chosen_offsets).astype(np.float32))[None].repeat(b, 1, 1)
     azimuths = torch.nn.Parameter(initial_azimuth, requires_grad=False)
     elevations = torch.nn.Parameter(initial_elevation, requires_grad=False)
-    offsets = torch.nn.Parameter(initial_offset, requires_grad=False)
+    offsets = torch.nn.Parameter(initial_offset, requires_grad=True)
     xscales = torch.nn.Parameter(x_initial_scale, requires_grad=True)
     yscales = torch.nn.Parameter(y_initial_scale, requires_grad=True)
     zscales = torch.nn.Parameter(z_initial_scale, requires_grad=True)
@@ -601,29 +602,33 @@ def solve_part_whole(
     scheduler_kwargs = {"optimizer": optim}
     scheduler = construct_class_by_name(**cfg.inference.scheduler, **scheduler_kwargs)
 
-    # print('offsets: ', offsets.shape)
-    # print('scales: ', scales.shape)
-    # print('azimuths: ', azimuths.shape)
-    # print('elevations: ', elevations.shape)
-    # print('cams: ', cams)
+    inter_kwargs = dict()
+    if 'near_pairs' in kwargs.keys():
+        # print('111')
+        inter_kwargs['near_pairs'] = kwargs['near_pairs']
+
     for epo in range(cfg.inference.part_epochs):
-        projected_map = inter_module.forward_whole(
+        projected_map, consistency_loss = inter_module.forward_whole(
             cams,
             thetas,
             mode=cfg.inference.inter_mode,
             blur_radius=cfg.inference.blur_radius,
             part_poses={'offset': offsets, 'xscale': xscales, 'yscale': yscales, 'zscale': zscales,
                         'azimuth': azimuths, 'elevation': elevations},
+            **inter_kwargs
         )
 
+        # print('consistency loss: ', consistency_loss.item())
         # [b, c, h, w] -> [b, h, w]
         object_score = torch.sum(projected_map * feature_map, dim=1)
-        loss = loss_fg_bg(object_score, clutter_score, )
+        render_loss = loss_fg_bg(object_score, clutter_score, )
         # loss = loss_fg_only(object_score)
         # loss = loss_with_mask(object_score, part_masks[part_id])
 
+        consistency_loss = cfg.inference.consistency_weight * consistency_loss
+        loss = render_loss + consistency_loss
         if epo % 20 == 0:
-            print('whole: ', epo, loss.item())
+            print('consistency: ', consistency_loss.item(), 'whole: ', render_loss.item())
 
         loss.backward()
         optim.step()
@@ -819,7 +824,7 @@ def batch_only_scale(
     b, c, hm_h, hm_w = feature_map.size()
 
     # Step 1: Pre-compute part mask
-    threshold = 0.70
+    threshold = cfg.inference.part_threshold
     part_feature = parts_feature[0].cuda()
 
     _score = (
@@ -828,6 +833,7 @@ def batch_only_scale(
     ).max(dim=1)[0]
 
     part_mask = _score > threshold
+    part_score = part_mask.sum()
 
     clutter_score = None
     if not isinstance(clutter_bank, list):
@@ -887,8 +893,8 @@ def batch_only_scale(
         # [b, c, h, w] -> [b, h, w]
         object_score = torch.sum(projected_map * feature_map, dim=1)
         # loss = loss_fg_bg(object_score, clutter_score, )
-        # loss = loss_fg_only(object_score)
-        loss = loss_with_mask(object_score, part_mask)
+        loss = loss_fg_only(object_score)
+        # loss = loss_with_mask(object_score, part_mask)
 
         if epo % 20 == 0:
             print('scale: ', epo, loss.item())
@@ -900,7 +906,7 @@ def batch_only_scale(
         if (epo + 1) % (cfg.inference.epochs // 3) == 0:
             scheduler.step()
 
-    return loss, (xscales.detach(), yscales.detach(), zscales.detach())
+    return loss, (xscales.detach(), yscales.detach(), zscales.detach()), part_score
 
 
 def part_initialization(
@@ -915,7 +921,7 @@ def part_initialization(
     b, c, hm_h, hm_w = feature_map.size()
 
     # Step 1: Pre-compute part mask
-    threshold = 0.70
+    threshold = cfg.inference.part_threshold
     part_feature = parts_feature[0].cuda()
 
     _score = (
@@ -924,6 +930,7 @@ def part_initialization(
     ).max(dim=1)[0]
 
     part_mask = _score > threshold
+    part_score = part_mask.sum()
 
     clutter_score = None
     if not isinstance(clutter_bank, list):
@@ -978,8 +985,8 @@ def part_initialization(
 
                 object_score = torch.sum(projected_map * feature_map, dim=1)
                 # loss = loss_fg_bg(object_score, clutter_score, )
-                # loss = loss_fg_only(object_score)
-                loss = loss_with_mask(object_score, part_mask)
+                loss = loss_fg_only(object_score)
+                # loss = loss_with_mask(object_score, part_mask)
 
                 if min_loss is None or loss < min_loss:
                     min_loss = loss
@@ -1005,11 +1012,12 @@ def part_initialization(
 
                 object_score = torch.sum(projected_map * feature_map, dim=1)
                 # loss = loss_fg_bg(object_score, clutter_score, )
-                # loss = loss_fg_only(object_score)
-                loss = loss_with_mask(object_score, part_mask)
+                loss = loss_fg_only(object_score)
+                # loss = loss_with_mask(object_score, part_mask)
 
                 if min_loss is None or loss < min_loss:
                     min_loss = loss
                     min_scale = (xscales, yscales, zscales)
 
-    return min_loss, min_offset, min_scale
+    print('loss after initialization: ', min_loss)
+    return min_loss, min_offset, min_scale, part_score

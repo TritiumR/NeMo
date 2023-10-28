@@ -137,17 +137,36 @@ def inference_image_part(
 ):
     if cate == 'car':
         anno_parts = ['body', 'wheel', 'mirror']
-        body_ious = []
-        wheel_ious = []
-        mirror_ious = []
+        body_intersections = 0
+        wheel_intersections = 0
+        mirror_intersections = 0
+        body_unions = 0
+        wheel_unions = 0
+        mirror_unions = 0
     elif cate == 'aeroplane':
         anno_parts = ['head', 'body', 'engine', 'wing', 'tail']
-        head_ious = []
-        body_ious = []
-        engine_ious = []
-        wing_ious = []
-        tail_ious = []
-
+        head_intersections = 0
+        body_intersections = 0
+        engine_intersections = 0
+        wing_intersections = 0
+        tail_intersections = 0
+        head_unions = 0
+        body_unions = 0
+        engine_unions = 0
+        wing_unions = 0
+        tail_unions = 0
+    elif cate == 'bicycle':
+        anno_parts = ['frame', 'handle', 'saddle', 'wheel']
+        frame_intersections = 0
+        handle_intersections = 0
+        saddle_intersections = 0
+        wheel_intersections = 0
+        frame_unions = 0
+        handle_unions = 0
+        saddle_unions = 0
+        wheel_unions = 0
+    bg_intersections = 0
+    bg_unions = 0
     mious = []
 
     for i, sample in enumerate(tqdm(dataloader, desc=f"{cfg.task}_{cate}")):
@@ -157,45 +176,90 @@ def inference_image_part(
                 continue
             print('results: ', results)
             if cate == 'car':
-                body_ious.append(results['body'])
-                wheel_ious.append(results['wheel'])
-                mirror_ious.append(results['mirror'])
+                body_intersections += results['intersections'][0]
+                wheel_intersections += results['intersections'][1]
+                mirror_intersections += results['intersections'][2]
+                bg_intersections += results['intersections'][3]
+                body_unions += results['unions'][0]
+                wheel_unions += results['unions'][1]
+                mirror_unions += results['unions'][2]
+                bg_unions += results['unions'][3]
             elif cate == 'aeroplane':
-                head_ious.append(results['head'])
-                body_ious.append(results['body'])
-                engine_ious.append(results['engine'])
-                wing_ious.append(results['wing'])
-                tail_ious.append(results['tail'])
+                head_intersections += results['intersections'][0]
+                body_intersections += results['intersections'][1]
+                engine_intersections += results['intersections'][2]
+                wing_intersections += results['intersections'][3]
+                tail_intersections += results['intersections'][4]
+                bg_intersections += results['intersections'][5]
+                head_unions += results['unions'][0]
+                body_unions += results['unions'][1]
+                engine_unions += results['unions'][2]
+                wing_unions += results['unions'][3]
+                tail_unions += results['unions'][4]
+                bg_unions += results['unions'][5]
+            elif cate == 'bicycle':
+                frame_intersections += results['intersections'][0]
+                handle_intersections += results['intersections'][1]
+                saddle_intersections += results['intersections'][2]
+                wheel_intersections += results['intersections'][3]
+                bg_intersections += results['intersections'][4]
+                frame_unions += results['unions'][0]
+                handle_unions += results['unions'][1]
+                saddle_unions += results['unions'][2]
+                wheel_unions += results['unions'][3]
+                bg_unions += results['unions'][4]
             mious.append(results['mIoU'])
 
+    print('exp name: ', cfg.args.save_dir.split('/')[-1])
     if cate == 'car':
-        wheel_ious = np.array(wheel_ious)
-        mirror_ious = np.array(mirror_ious)
-        body_ious = np.array(body_ious)
+        wheel_ious = wheel_intersections / wheel_unions
+        mirror_ious = mirror_intersections / mirror_unions
+        body_ious = body_intersections / body_unions
+        bg_ious = bg_intersections / bg_unions
         results = {}
-        results["wheel_iou"] = np.mean(wheel_ious)
-        results["mirror_iou"] = np.mean(mirror_ious)
-        results["body_iou"] = np.mean(body_ious)
-        results["mIoU"] = np.mean(mious)
+        results["wheel_iou"] = wheel_ious
+        results["mirror_iou"] = mirror_ious
+        results["body_iou"] = body_ious
+        results["mIoU"] = np.nanmean(mious)
+        results["bg_iou"] = bg_ious
         print('final results: ')
         print('wheel_iou: ', results["wheel_iou"], '  mirror_iou: ', results["mirror_iou"], '  body_iou: ',
-              results["body_iou"], '  mIoU: ', results["mIoU"])
+              results["body_iou"], '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
     elif cate == 'aeroplane':
-        head_ious = np.array(head_ious)
-        body_ious = np.array(body_ious)
-        engine_ious = np.array(engine_ious)
-        wing_ious = np.array(wing_ious)
-        tail_ious = np.array(tail_ious)
+        head_ious = head_intersections / head_unions
+        body_ious = body_intersections / body_unions
+        engine_ious = engine_intersections / engine_unions
+        wing_ious = wing_intersections / wing_unions
+        tail_ious = tail_intersections / tail_unions
+        bg_ious = bg_intersections / bg_unions
         results = {}
-        results["head_iou"] = np.mean(head_ious)
-        results["body_iou"] = np.mean(body_ious)
-        results["engine_iou"] = np.mean(engine_ious)
-        results["wing_iou"] = np.mean(wing_ious)
-        results["tail_iou"] = np.mean(tail_ious)
-        results["mIoU"] = np.mean(mious)
+        results["head_iou"] = head_ious
+        results["body_iou"] = body_ious
+        results["engine_iou"] = engine_ious
+        results["wing_iou"] = wing_ious
+        results["tail_iou"] = tail_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
         print('final results: ')
         print('head_iou: ', results["head_iou"], '  body_iou: ', results["body_iou"], '  engine_iou: ',
               results["engine_iou"], '  wing_iou: ', results["wing_iou"], '  tail_iou: ', results["tail_iou"],
+              '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
+    elif cate == 'bicycle':
+        frame_ious = frame_intersections / frame_unions
+        handle_ious = handle_intersections / handle_unions
+        saddle_ious = saddle_intersections / saddle_unions
+        wheel_ious = wheel_intersections / wheel_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["frame_iou"] = frame_ious
+        results["handle_iou"] = handle_ious
+        results["saddle_iou"] = saddle_ious
+        results["wheel_iou"] = wheel_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('frame_iou: ', results["frame_iou"], '  handle_iou: ', results["handle_iou"], '  saddle_iou: ',
+              results["saddle_iou"], '  wheel_iou: ', results["wheel_iou"], '  bg_iou: ', results["bg_iou"],
               '  mIoU: ', results["mIoU"])
     return None
 

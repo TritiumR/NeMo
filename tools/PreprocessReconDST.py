@@ -120,36 +120,16 @@ def capsule_decompose(pc, R=None, T=None):
     return _labels, _feats
 
 
-if config.cat_type == 'car':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/car'
-    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
-    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02958343'
-    save_path = '../data/ShapeNet/Preprocess/car'
-    chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
-elif config.cat_type == 'plane':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/aeroplane'
-    recon_path = '../data/CorrData/mesh/aeroplane'
-    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02691156'
-    save_path = '../data/ShapeNet/Preprocess/aeroplane'
-    chosen_instance = '3cb63efff711cfc035fc197bbabcd5bd'
-elif config.cat_type == 'boat':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/boat'
-    recon_path = '../data/CorrData/mesh/boat'
-    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/04530566'
-    save_path = '../data/ShapeNet/Preprocess/boat'
-    chosen_instance = '2340319ec4d93ae8c1df6b0203ecb359'
-elif config.cat_type == 'bicycle':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/bicycle'
-    recon_path = '../data/CorrData/mesh/bicycle'
-    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/02834778'
-    save_path = '../data/ShapeNet/Preprocess/bicycle'
-    chosen_instance = '91k7HKqdM9'
-elif config.cat_type == 'chair':
-    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/train/chair'
-    recon_path = '../data/CorrData/mesh/chair'
-    ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/03001627'
-    save_path = '../data/ShapeNet/Preprocess/chair'
-    chosen_instance = '10de9af4e91682851e5f7bff98fb8d02'
+if config.cat_type == 'aeroplane':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02690373'
+    recon_path = '../data/CorrData/DST_part3d/recon/n02690373'
+    save_path = '../data/CorrData/DST_part3d/index/n02690373'
+    chosen_instance = '22831bc32bd744d3f06dea205edf9704'
+elif config.cat_type == 'police':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03977966'
+    recon_path = '../data/CorrData/DST_part3d/recon/n03977966'
+    save_path = '../data/CorrData/DST_part3d/index/n03977966'
+    chosen_instance = '372ceb40210589f8f500cc506a763c18'
 else:
     raise NotImplementedError
 
@@ -162,17 +142,7 @@ if not os.path.exists(instance_path):
     os.makedirs(instance_path)
 
 recon_fn = os.path.join(recon_path, f"{chosen_instance}_recon_mesh.ply")
-verts, faces, _, _ = pcu.load_mesh_vfnc(recon_fn)
-
-# normalize (scale: recon, offset:ori)
-vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-if config.cat_type == 'bicycle':
-    ori_fn = os.path.join(ori_mesh_path, chosen_instance, 'model.obj')
-else:
-    ori_fn = os.path.join(ori_mesh_path, chosen_instance, 'models', 'model_normalized.obj')
-ori_verts, _, _ = load_obj(ori_fn, device=device)
-vert_middle = (ori_verts.max(dim=0)[0] + ori_verts.min(dim=0)[0]) / 2 * vert_scale
-np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
+verts, _, _, _ = pcu.load_mesh_vfnc(recon_fn)
 
 # decompose using point cloud
 v = verts
@@ -203,18 +173,6 @@ for instance_id in instance_ids:
     # using processed mesh
     recon_fn = os.path.join(recon_path, f"{instance_id}_recon_mesh.ply")
     verts, _, _, _ = pcu.load_mesh_vfnc(recon_fn)
-
-    # normalize (scale: recon, offset:ori)
-    vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-    if config.cat_type == 'bicycle':
-        ori_fn = os.path.join(ori_mesh_path, instance_id, 'model.obj')
-    else:
-        ori_fn = os.path.join(ori_mesh_path, instance_id, 'models', 'model_normalized.obj')
-    ori_verts, _, _ = load_obj(ori_fn, device=device)
-    vert_middle = (ori_verts.max(dim=0)[0] + ori_verts.min(dim=0)[0]) / 2 * vert_scale
-    # ori_scale = ((ori_verts.max(dim=0)[0] - ori_verts.min(dim=0)[0]) ** 2).sum() ** 0.5
-    # print('ori_scale: ', ori_scale)
-    # np.save(os.path.join(instance_path, 'offset.npy'), vert_middle.cpu().numpy())
 
     # decompose using point cloud
     v = verts
