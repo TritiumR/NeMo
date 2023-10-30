@@ -73,6 +73,10 @@ class NeMo(BaseModel):
 
         if cate == 'aeroplane':
             self.chosen_id = '22831bc32bd744d3f06dea205edf9704'
+        elif cate == 'police':
+            self.chosen_id = '372ceb40210589f8f500cc506a763c18'
+        elif cate == 'bench':
+            self.chosen_id = '1b0463c11f3cc1b3601104cd2d998272'
 
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate, type=mode)
         self.build()
@@ -156,15 +160,17 @@ class NeMo(BaseModel):
         #     im = Image.fromarray((t0.cpu().numpy()[iidx] * 255).astype(np.uint8)).convert('RGB')
         #     imd = ImageDraw.ImageDraw(im)
         #     for k, vv in zip(kps[iidx], vis_mask_[iidx]):
+        #         if k[0] < 0 or k[1] < 0 or k[0] > im.size[0] or k[1] > im.size[1]:
+        #             if (vv.item()):
+        #                 os.path.create_dirs('out_of_range')
         #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
         #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
-        #         break
         #     return im
-        # for idx in range(8):
-        #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{idx}.png')
+        # for idx in range(len(img)):
+        #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{sample["instance_id"][idx]}.png')
         #
         # exit(0)
-        
+
         features = self.net.forward(img, keypoint_positions=kp, obj_mask=1 - obj_mask, do_normalize=True,)
 
         if self.training_params.separate_bank:

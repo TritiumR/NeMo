@@ -10,18 +10,30 @@ if cat_type == 'aeroplane':
     imgs_path = '../data/CorrData/DST_part3d/train/n02690373'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02691156/ply'
     save_path = '../data/CorrData/DST_part3d/recon/n02690373'
-if cat_type == 'jeep':
+elif cat_type == 'jeep':
     imgs_path = '../data/CorrData/DST_part3d/train/n03594945'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
     save_path = '../data/CorrData/DST_part3d/recon/n03594945'
-if cat_type == 'sailboat':
+elif cat_type == 'sailboat':
     imgs_path = '../data/CorrData/DST_part3d/train/n02981792'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/04530566/ply'
     save_path = '../data/CorrData/DST_part3d/recon/n02981792'
-if cat_type == 'police':
+elif cat_type == 'police':
     imgs_path = '../data/CorrData/DST_part3d/train/n03977966'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
     save_path = '../data/CorrData/DST_part3d/recon/n03977966'
+elif cat_type == 'van':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03769881'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02958343/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n03769881'
+elif cat_type == 'bicycle':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02835271'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02834778/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n02835271'
+elif cat_type == 'bench':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03891251'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02828884/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n03891251'
 else:
     raise NotImplementedError
 

@@ -8,6 +8,17 @@ import torchvision
 
 from nemo.utils import get_abs_path
 
+class PosePredLoader():
+    def __init__(self, cate, base_path='eval/pose_estimation_3d_nemo_%s'):
+        base_path = base_path % cate
+        self.preds = torch.load(os.path.join(base_path, 'pascal3d_occ0_%s_val.pth' % cate))
+        self.kkeys = {t.split('/')[1]:t for t in self.preds.keys()}
+
+    def __getitem__(self, key):
+        if key in self.kkeys:
+            return self.preds[self.kkeys[key]]['final'][0]
+        else:
+            return None
 
 class PascalImagePart(Dataset):
     def __init__(self, data_type, category, root_path, **kwargs):
@@ -19,10 +30,20 @@ class PascalImagePart(Dataset):
 
         data_path = os.path.join(root_path, 'images', category)
         anno_path = os.path.join(root_path, 'annotations', category)
+        pose_path = 'eval/pose_estimation_3d_nemo_%s' % category
+        pose_path_train = 'eval1/pose_estimation_3d_nemo_%s_training' % category
+        self.preds = torch.load(os.path.join(pose_path, 'pascal3d_occ0_%s_val.pth' % category))
+        # self.preds.update(torch.load(os.path.join(pose_path_train, 'pascal3d_occ0_%s_val.pth' % category)))
+        self.kkeys = {t.split('/')[1]: t for t in self.preds.keys()}
+        print('len: ', len(self.kkeys))
+        # print(self.kkeys)
+
+        self.save_path = get_abs_path(data_path)
 
         self.images = []
         self.segs = []
         self.annos = []
+        self.names = []
         for image_name in os.listdir(data_path):
             if 'seg' in image_name:
                 continue
@@ -36,6 +57,7 @@ class PascalImagePart(Dataset):
             self.images.append(image)
             self.segs.append(seg)
             self.annos.append(anno)
+            self.names.append(image_name.split('.')[0])
 
     def __getitem__(self, item):
         sample = dict()
@@ -43,8 +65,16 @@ class PascalImagePart(Dataset):
         img = ori_img / 255.
         seg = self.segs[item]
         anno = self.annos[item]
+        name = self.names[item]
+        pose_pred = 0.
+        if name in self.kkeys:
+            pose_pred = self.preds[self.kkeys[name]]['final'][0]
+            if self.category == 'bicycle':
+                pose_pred['azimuth'] = pose_pred['azimuth'] + np.pi / 2
+            pose_pred['elevation'] = np.pi - pose_pred['elevation']
 
         distance = float(anno['distance'])
+        print(distance)
         elevation = float(anno['elevation'])
         azimuth = float(anno['azimuth'])
         theta = float(anno['theta'])
@@ -58,6 +88,8 @@ class PascalImagePart(Dataset):
         sample['elevation'] = elevation
         sample['azimuth'] = azimuth
         sample['theta'] = theta
+        sample['save_path'] = os.path.join(self.save_path, name)
+        sample['pose_pred'] = pose_pred
 
         return sample
 

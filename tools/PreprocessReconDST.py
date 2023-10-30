@@ -130,6 +130,11 @@ elif config.cat_type == 'police':
     recon_path = '../data/CorrData/DST_part3d/recon/n03977966'
     save_path = '../data/CorrData/DST_part3d/index/n03977966'
     chosen_instance = '372ceb40210589f8f500cc506a763c18'
+elif config.cat_type == 'bench':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03891251'
+    recon_path = '../data/CorrData/DST_part3d/recon/n03891251'
+    save_path = '../data/CorrData/DST_part3d/index/n03891251'
+    chosen_instance = '1b0463c11f3cc1b3601104cd2d998272'
 else:
     raise NotImplementedError
 

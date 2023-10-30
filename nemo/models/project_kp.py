@@ -568,24 +568,6 @@ def get_one_standard(raster, camera, mesh, func_of_mesh=func_single, restrict_to
         for i in range(R.shape[0]):
             vis_mask[i, mesh_._num_verts_per_mesh[i]:] = False
 
-    # import numpy as np
-    # import BboxTools as bbt
-    # from PIL import Image, ImageDraw
-    # tt = depth_[0] / depth_[0].max()
-    # kps = project_verts.cpu().numpy()
-    # point_size = 2
-    # def foo(t0, vis_mask_):
-    #     im = Image.fromarray((t0.cpu().numpy()[0] * 255).astype(np.uint8)).convert('RGB')
-    #     imd = ImageDraw.ImageDraw(im)
-    #     for k, vv in zip(kps[0], vis_mask_[0]):
-    #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
-    #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
-    #
-    #     return im
-    #
-    # foo(tt, vis_mask).save('temp.png')
-
-
     return project_verts, vis_mask & inner_mask
 
 

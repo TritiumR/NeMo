@@ -28,6 +28,9 @@ class MeshLoader():
         elif cate == 'police':
             cate_id = 'n03977966'
             chosen_id = '372ceb40210589f8f500cc506a763c18'
+        elif cate == 'bench':
+            cate_id = 'n03891251'
+            chosen_id = '1b0463c11f3cc1b3601104cd2d998272'
         else:
             raise NotImplementedError
 
@@ -213,6 +216,7 @@ class DSTPartShapeNet(Dataset):
         self.category = category
         self.root_path = get_abs_path(root_path)
 
+        skip_list = ['2a80c18fc2b4732bfb7c76304cb719f8']
         if self.category == 'aeroplane':
             cate_id = 'n02690373'
             part_list = ['1c27d282735f81211063b9885ddcbb1', '1d96d1c7cfb1085e61f1ef59130c405d',
@@ -228,6 +232,13 @@ class DSTPartShapeNet(Dataset):
                           '498e4295b3aeca9fefddc097534e4553', '5389c96e84e9e0582b1e8dc2f1faa8cb',
                           '7492ced6cb6289c556de8db8652eec4e', '9511b5ded804a33f597505fd7d99b613',
                           'a5d32daf96820ca5f63ee8a34069b7c5', 'e90a136270c03eebaaafd94b9f216ef6']
+        elif self.category == 'bench':
+            cate_id = 'n03891251'
+            part_list = ['1a40eaf5919b1b3f3eaa2b95b99dae6', '1aa15011153c5d6aa64b59533813e6d6',
+                         '1b1cffcc9435c559f155d75bbf62b80', '1b9ddee986099bb78880edc6251fa529',
+                         '1b80cd42474a990ccd8655d05e2f9e02', '1b78416210cbdcf1b184e775cf66758c',
+                         '1be83cdaf803fa3b827358da75ee7655', '1bf5b1fa54aeec162701a18243b45d3',
+                         '1c310698c57a3d378fd6b27be619556b', '1dfcce44c2f98d2c81e7c6cfefba0d68']
         else:
             raise NotImplementedError
 
@@ -244,6 +255,8 @@ class DSTPartShapeNet(Dataset):
         self.render_img_fns = []
         lambda_fn = lambda x: int(x[:3])
         for instance_id in self.instance_list:
+            if instance_id in skip_list:
+                continue
             img_path = os.path.join(self.cate_path, instance_id, 'image_minigpt4_1008')
             render_img_path = os.path.join(self.cate_path, instance_id, 'image_render')
             anno_path = os.path.join(self.cate_path, instance_id, 'annotation')

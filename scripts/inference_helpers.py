@@ -165,6 +165,12 @@ def inference_image_part(
         handle_unions = 0
         saddle_unions = 0
         wheel_unions = 0
+    elif cate == 'boat':
+        anno_parts = ['body', 'sail']
+        body_intersections = 0
+        sail_intersections = 0
+        body_unions = 0
+        sail_unions = 0
     bg_intersections = 0
     bg_unions = 0
     mious = []
@@ -208,6 +214,13 @@ def inference_image_part(
                 saddle_unions += results['unions'][2]
                 wheel_unions += results['unions'][3]
                 bg_unions += results['unions'][4]
+            elif cate == 'boat':
+                body_intersections += results['intersections'][0]
+                sail_intersections += results['intersections'][1]
+                bg_intersections += results['intersections'][2]
+                body_unions += results['unions'][0]
+                sail_unions += results['unions'][1]
+                bg_unions += results['unions'][2]
             mious.append(results['mIoU'])
 
     print('exp name: ', cfg.args.save_dir.split('/')[-1])
@@ -260,6 +273,18 @@ def inference_image_part(
         print('final results: ')
         print('frame_iou: ', results["frame_iou"], '  handle_iou: ', results["handle_iou"], '  saddle_iou: ',
               results["saddle_iou"], '  wheel_iou: ', results["wheel_iou"], '  bg_iou: ', results["bg_iou"],
+              '  mIoU: ', results["mIoU"])
+    elif cate == 'boat':
+        body_ious = body_intersections / body_unions
+        sail_ious = sail_intersections / sail_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["body_iou"] = body_ious
+        results["sail_iou"] = sail_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('body_iou: ', results["body_iou"], '  sail_iou: ', results["sail_iou"], '  bg_iou: ', results["bg_iou"],
               '  mIoU: ', results["mIoU"])
     return None
 
