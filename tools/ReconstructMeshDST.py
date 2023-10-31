@@ -34,6 +34,10 @@ elif cat_type == 'bench':
     imgs_path = '../data/CorrData/DST_part3d/train/n03891251'
     points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/02828884/ply'
     save_path = '../data/CorrData/DST_part3d/recon/n03891251'
+elif cat_type == 'watercraft':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03344393'
+    points_path = '/home/chuanruo/canonical-capsules/data/customShapeNet/04530566/ply'
+    save_path = '../data/CorrData/DST_part3d/recon/n03344393'
 else:
     raise NotImplementedError
 

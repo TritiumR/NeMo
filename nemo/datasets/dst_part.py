@@ -15,12 +15,13 @@ import os
 
 
 class MeshLoader():
-    def __init__(self, dataset_config, cate='aeroplane', type=None):
+    def __init__(self, dataset_config, cate='airliner', type=None):
         if cate == 'jeep':
             cate_id = 'n03594945'  # .glb
-        elif cate == 'aeroplane':
+        elif cate == 'airliner':
             cate_id = 'n02690373'  # .obj
             chosen_id = '22831bc32bd744d3f06dea205edf9704'
+            self.anno_parts = ['engine', 'fuselarge', 'wing', 'vertical_stabilizer', 'wheel', 'horizontal_stabilizer']
         elif cate == 'sailboat':
             cate_id = 'n02981792'  # .glb
         elif cate == 'bicycle':
@@ -31,6 +32,7 @@ class MeshLoader():
         elif cate == 'bench':
             cate_id = 'n03891251'
             chosen_id = '1b0463c11f3cc1b3601104cd2d998272'
+            self.anno_parts = ['arm', 'backrest', 'beam', 'seat', 'leg']
         else:
             raise NotImplementedError
 
@@ -75,16 +77,13 @@ class MeshLoader():
 
 class PartsLoader():
     def __init__(self, dataset_config, cate='car', chosen_ids=None):
-        if cate == 'car':
-            cate_id = '02958343'
-        elif cate == 'aeroplane':
-            cate_id = '02691156'
-        elif cate == 'boat':
-            cate_id = '04530566'
-        elif cate == 'bicycle':
-            cate_id = '02834778'
-        elif cate == 'chair':
-            cate_id = '03001627'
+        if cate == 'airliner':
+            cate_id = 'n02690373'
+            chosen_ids = ['22831bc32bd744d3f06dea205edf9704']
+        elif cate == 'bench':
+            cate_id = 'n03891251'
+            chosen_ids = ['1b40594ce6fa66ca35028a2641239f56', '1b0463c11f3cc1b3601104cd2d998272',
+                           '1b6a5fc808388138cb2a965e75be701c']
         else:
             raise NotImplementedError
 
@@ -95,91 +94,52 @@ class PartsLoader():
         self.cate = cate
 
         for chosen_id in chosen_ids:
-            if cate in ['bicycle', 'boat']:
-                recon_mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate, f'{chosen_id}_recon_mesh.ply')
-                chosen_verts, _, _, _ = pcu.load_mesh_vfnc(recon_mesh_path)
-                chosen_verts = torch.from_numpy(chosen_verts.astype(np.float32))
-            else:
-                # load chosen mesh
-                ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models',
-                                             'model_normalized.obj')
-                chosen_verts, _, _ = load_obj(ori_mesh_path)
+            recon_mesh_path = os.path.join(dataset_config['root_path'], 'recon', cate_id, f'{chosen_id}_recon_mesh.ply')
+            chosen_verts, _, _, _ = pcu.load_mesh_vfnc(recon_mesh_path)
+            chosen_verts = torch.from_numpy(chosen_verts.astype(np.float32))
+            vert_scale = ((chosen_verts.max(axis=0)[0] - chosen_verts.min(axis=0)[0]) ** 2).sum() ** 0.5
             vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
-            if chosen_id in ['1d63eb2b1f78aa88acf77e718d93f3e1', '3cb63efff711cfc035fc197bbabcd5bd']:
-                vert_middle[1] -= 0.08
 
             # load annotated parts
             part_meshes = []
             offsets = []
-            if dataset_config.get('ori_mesh', False):
-                part_path = os.path.join(dataset_config['root_path'], 'ori_parts', cate, chosen_id)
-            else:
-                part_path = os.path.join(dataset_config['root_path'], f'{cate}', chosen_id)
 
-            if cate in ['bicycle', 'boat']:
-                if self.part_names is None:
-                    self.part_names = []
-                    for name in os.listdir(part_path):
-                        if '.ply' not in name:
-                            continue
-                        part_fn = os.path.join(part_path, name)
-                        part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
-                        part_verts = torch.from_numpy(part_verts.astype(np.float32))
-                        part_faces = torch.from_numpy(part_faces.astype(np.int32))
-                        part_verts = part_verts - vert_middle
-                        part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
-                        part_verts = part_verts - part_middle
-                        offsets.append(np.array(part_middle))
-                        part_meshes.append((part_verts, part_faces))
-                        self.part_names.append(name.split('.')[0].split('_')[0])
-                else:
-                    for name in self.part_names:
-                        part_fn = os.path.join(part_path, f'{name}_recon.ply')
-                        if not os.path.exists(part_fn):
-                            part_meshes.append((torch.zeros(1, 3), torch.zeros(1, 3)))
-                            offsets.append(np.array([[0., 0., 0.]]))
-                            continue
-                        part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
-                        part_verts = torch.from_numpy(part_verts.astype(np.float32))
-                        part_faces = torch.from_numpy(part_faces.astype(np.int32))
-                        part_verts = part_verts - vert_middle
-                        part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
-                        part_verts = part_verts - part_middle
-                        offsets.append(np.array(part_middle))
-                        part_meshes.append((part_verts, part_faces))
+            part_path = os.path.join(dataset_config['root_path'], cate_id, chosen_id)
+
+            if self.part_names is None:
+                self.part_names = []
+                for name in os.listdir(part_path):
+                    if '.ply' not in name:
+                        continue
+                    part_fn = os.path.join(part_path, name)
+                    part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
+                    part_verts = torch.from_numpy(part_verts.astype(np.float32))
+                    part_faces = torch.from_numpy(part_faces.astype(np.int32))
+                    part_verts = part_verts - vert_middle
+                    part_verts = part_verts / vert_scale
+
+                    part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
+                    part_verts = part_verts - part_middle
+                    offsets.append(np.array(part_middle))
+                    part_meshes.append((part_verts, part_faces))
+                    self.part_names.append(name.split('.')[0])
             else:
-                if self.part_names is None:
-                    self.part_names = []
-                    for name in os.listdir(part_path):
-                        if '.obj' not in name:
-                            continue
-                        part_fn = os.path.join(part_path, name)
-                        part_verts, faces_idx, _ = load_obj(part_fn)
-                        part_faces = faces_idx.verts_idx
-                        part_verts = part_verts - vert_middle
-                        part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
-                        part_verts = part_verts - part_middle
-                        offsets.append(np.array(part_middle))
-                        part_meshes.append((part_verts, part_faces))
-                        self.part_names.append(name.split('.')[0].split('_')[0])
-                else:
-                    for name in self.part_names:
-                        if dataset_config.get('ori_mesh', False):
-                            part_fn = os.path.join(part_path, f'{name}.obj')
-                        else:
-                            part_fn = os.path.join(part_path, f'{name}_recon.obj')
-                        if not os.path.exists(part_fn):
-                            # print('no part ', name)
-                            part_meshes.append((torch.zeros(1, 3), torch.zeros(1, 3)))
-                            offsets.append(np.array([[0., 0., 0.]]))
-                            continue
-                        part_verts, faces_idx, _ = load_obj(part_fn)
-                        part_faces = faces_idx.verts_idx
-                        part_verts = part_verts - vert_middle
-                        part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
-                        part_verts = part_verts - part_middle
-                        offsets.append(np.array(part_middle))
-                        part_meshes.append((part_verts, part_faces))
+                for name in self.part_names:
+                    part_fn = os.path.join(part_path, f'{name}.ply')
+                    if not os.path.exists(part_fn):
+                        part_meshes.append((torch.zeros(1, 3), torch.zeros(1, 3)))
+                        offsets.append(np.array([[0., 0., 0.]]))
+                        continue
+                    part_verts, part_faces, _, _ = pcu.load_mesh_vfnc(part_fn)
+                    part_verts = torch.from_numpy(part_verts.astype(np.float32))
+                    part_faces = torch.from_numpy(part_faces.astype(np.int32))
+                    part_verts = part_verts - vert_middle
+                    part_verts = part_verts / vert_scale
+
+                    part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
+                    part_verts = part_verts - part_middle
+                    offsets.append(np.array(part_middle))
+                    part_meshes.append((part_verts, part_faces))
 
             self.parts_meshes[chosen_id] = part_meshes
             self.parts_offsets[chosen_id] = offsets
@@ -199,16 +159,6 @@ class PartsLoader():
             return offsets
         return offsets[self.part_names.index(name)]
 
-    def get_ori_part(self, id, name):
-        part_path = os.path.join(self.dataset_config['root_path'], 'ori_parts', self.cate, id)
-        part_fn = os.path.join(part_path, f'{name}.obj')
-        part_vert, faces_idx, _ = load_obj(part_fn)
-        part_face = faces_idx.verts_idx
-        part_middle = (part_vert.max(axis=0)[0] + part_vert.min(axis=0)[0]) / 2
-        part_vert = part_vert - part_middle
-
-        return part_vert.numpy(), part_face.numpy()
-
 
 class DSTPartShapeNet(Dataset):
     def __init__(self, data_type, category, root_path, **kwargs):
@@ -217,7 +167,7 @@ class DSTPartShapeNet(Dataset):
         self.root_path = get_abs_path(root_path)
 
         skip_list = ['2a80c18fc2b4732bfb7c76304cb719f8']
-        if self.category == 'aeroplane':
+        if self.category == 'airliner':
             cate_id = 'n02690373'
             part_list = ['1c27d282735f81211063b9885ddcbb1', '1d96d1c7cfb1085e61f1ef59130c405d',
                           '1de008320c90274d366b1ebd023111a8', '4ad92be763c2ded8fca1f1143bb6bc17',
@@ -253,6 +203,7 @@ class DSTPartShapeNet(Dataset):
         self.img_fns = []
         self.angle_fns = []
         self.render_img_fns = []
+        self.segment_fns = []
         lambda_fn = lambda x: int(x[:3])
         for instance_id in self.instance_list:
             if instance_id in skip_list:
@@ -262,16 +213,25 @@ class DSTPartShapeNet(Dataset):
             anno_path = os.path.join(self.cate_path, instance_id, 'annotation')
             img_list = os.listdir(img_path)
             img_list = sorted(img_list, key=lambda_fn)
-            self.img_fns += [os.path.join(img_path, x) for x in img_list]
+            self.img_fns += [os.path.join(img_path, x) for x in img_list[:1]]
             angle_list = os.listdir(anno_path)
             angle_list = sorted(angle_list, key=lambda_fn)
-            self.angle_fns += [os.path.join(anno_path, x) for x in angle_list]
+            self.angle_fns += [os.path.join(anno_path, x) for x in angle_list[:1]]
             render_img_list = os.listdir(render_img_path)
             render_img_list = sorted(render_img_list, key=lambda_fn)
-            self.render_img_fns += [os.path.join(render_img_path, x) for x in render_img_list]
+            self.render_img_fns += [os.path.join(render_img_path, x) for x in render_img_list[:1]]
+            if data_type == 'test':
+                segment_path = os.path.join(self.root_path, 'segment', cate_id, instance_id)
+                segment_list = os.listdir(segment_path)
+                segment_list = sorted(segment_list, key=lambda_fn)
+                self.segment_fns += [os.path.join(segment_path, x) for x in segment_list[:1]]
 
             assert len(self.img_fns) == len(self.angle_fns) == len(self.render_img_fns), \
                 f'{len(self.img_fns)}, {len(self.angle_fns)}, {len(self.render_img_fns)}'
+
+            if data_type == 'test':
+                assert len(self.img_fns) == len(self.segment_fns), \
+                    f'{len(self.img_fns)}, {len(self.segment_fns)}'
 
     def __getitem__(self, item):
         ori_img = cv2.imread(self.img_fns[item], cv2.IMREAD_UNCHANGED)
@@ -300,7 +260,7 @@ class DSTPartShapeNet(Dataset):
 
         img = img / 255.0
         sample['img'] = np.ascontiguousarray(img).astype(np.float32)
-        sample['img_ori'] = np.ascontiguousarray(img).astype(np.float32)
+        sample['img_ori'] = np.ascontiguousarray(ori_img).astype(np.int32)
         sample['obj_mask'] = np.ascontiguousarray(mask).astype(np.float32)
 
         sample['distance'] = distance
@@ -309,6 +269,11 @@ class DSTPartShapeNet(Dataset):
         sample['theta'] = theta
         sample['instance_id'] = instance_id
         sample['this_name'] = item
+
+        if len(self.segment_fns) > 0:
+            seg = cv2.imread(self.segment_fns[item], cv2.IMREAD_UNCHANGED)
+            # print(seg.shape)
+            sample['seg'] = np.ascontiguousarray(seg).astype(np.float32)
 
         return sample
 
