@@ -1,0 +1,85 @@
+dataset: config/datasets/DST_part.yaml
+model: config/models/nemo_choose_dst.yaml
+
+task: image_part
+ori_mesh: False
+part_initialization: False
+use_pred: False
+part_consistency: False
+
+training:
+    batch_size: 10
+    workers: 8
+    total_epochs: 1000
+    log_interval: 1
+    ckpt_interval: 200
+    visualize_training_data: false
+    remove_no_bg: 8
+    visual_kp: False
+    visual_mesh: False
+
+inference:
+    init_mode: 3d_batch
+    loss: nemo.models.solve_pose.loss_fg_bg
+    batch_size: 1 # set to 20 for 24GB vmem
+
+    search_translation: false
+    optimize_translation: false
+    visual_pose: True
+    part_threshold: 0.75
+    nearest_k: 3
+    dis_threshold: 0.01
+    on_corr_eps: 0.001
+    consistency_weight: 1
+
+    px_sample:
+        min: 0.0
+        max: 0.0
+        num: 1
+    py_sample:
+        min: 0.0
+        max: 0.0
+        num: 1
+    azim_sample:
+        min_pi: 0.0
+        max_pi: 2.0
+        num: 12
+    elev_sample:
+        min_pi: -0.3333
+        max_pi: 0.3333
+        num: 12
+    theta_sample:
+        min_pi: -0.1667
+        max_pi: 0.1667
+        num: 3
+    dist_sample:
+        min: 5.0
+        max: 5.0
+        num: 1
+
+    min_distance: 2
+    pre_rendering_thr: 80
+    blur_radius: 0.0
+    inter_mode: bilinear
+    epochs: 500
+    scale_epochs: 1
+    part_epochs: 3
+    translation_scale: 0.1
+
+    optimizer:
+        class_name: torch.optim.Adam
+        lr: 0.05
+        betas:
+            - 0.4
+            - 0.6
+
+    part_optimizer:
+        class_name: torch.optim.Adam
+        lr: 0.005
+        betas:
+            - 0.4
+            - 0.6
+
+    scheduler:
+        class_name: torch.optim.lr_scheduler.ExponentialLR
+        gamma: 0.2
