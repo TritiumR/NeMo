@@ -60,7 +60,7 @@ class NeMo(BaseModel):
         self.inference_params = inference
         self.dataset_config = cfg.dataset
         self.accumulate_steps = 0
-        if cate in ['car', 'aeroplane']:
+        if cate in ['car', 'aeroplane', 'police1']:
             self.num_verts = 3072
         else:
             self.num_verts = 1024
@@ -85,6 +85,18 @@ class NeMo(BaseModel):
         elif cate == 'airliner':
             self.chosen_id = '22831bc32bd744d3f06dea205edf9704'
             self.chosen_ids = ['22831bc32bd744d3f06dea205edf9704']
+        elif cate == 'police':
+            self.chosen_id = '372ceb40210589f8f500cc506a763c18'
+            self.chosen_ids = ['372ceb40210589f8f500cc506a763c18']
+        elif cate == 'police1':
+            self.chosen_id = '511962626501e4abf500cc506a763c18'
+            self.chosen_ids = ['511962626501e4abf500cc506a763c18']
+        elif cate == 'bike':
+            self.chosen_id = '91k7HKqdM9'
+            self.chosen_ids = ['91k7HKqdM9', 'LGj1dKhcY1', 'Mlb3AKfw61']
+        elif cate == 'sailboat':
+            self.chosen_id = '246335e0dfc3a0ea834ac3b5e36b95c'
+            self.chosen_ids = ['246335e0dfc3a0ea834ac3b5e36b95c']
 
         self.parts_loader = PartsLoader(self.dataset_config, cate=cate, chosen_ids=self.chosen_ids)
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate)
@@ -958,10 +970,10 @@ class NeMo(BaseModel):
         vis_get.save(f'{save_path}/{miou}_seg.jpg')
 
         # print('vis_imgs[0]: ', vis_imgs[0].shape)
-        vis_img = vis_imgs[0].astype(np.uint8)
-        # print('vis_img: ', vis_img.shape)
-        vis_img = Image.fromarray(vis_img)
-        vis_img.save(f'{save_path}/{miou}_ori.png')
+        # vis_img = vis_imgs[0].transpose(1, 2, 0) * 255
+        # # print('vis_img: ', vis_img.shape)
+        # vis_img = Image.fromarray(vis_img)
+        # vis_img.save(f'{save_path}/{miou}_ori.png')
 
         vis_anno = anno.clone() / anno.max() * 255
         vis_anno = vis_anno.numpy().astype(np.uint8)

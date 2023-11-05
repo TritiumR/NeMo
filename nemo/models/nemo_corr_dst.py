@@ -144,6 +144,8 @@ class NeMo(BaseModel):
         index = torch.Tensor([[k for k in range(self.num_verts)]] * img.shape[0]).cuda()
         mesh_index = [self.mesh_loader.mesh_name_dict[t] for t in sample['instance_id']]
 
+        # print('mesh_index: ', mesh_index)
+
         kwargs_ = dict(principal=sample['principal'], func_of_mesh=func_reselect, indexs=mesh_index) if 'principal' in sample.keys() else dict(func_of_mesh=func_reselect, indexs=mesh_index)
         get_mesh_index = self.mesh_loader.get_index_list(mesh_index).cuda()
 
@@ -159,12 +161,18 @@ class NeMo(BaseModel):
         # def foo(t0, kps, vis_mask_, iidx=0, point_size=3):
         #     im = Image.fromarray((t0.cpu().numpy()[iidx] * 255).astype(np.uint8)).convert('RGB')
         #     imd = ImageDraw.ImageDraw(im)
+        #     skip_idx = 5
+        #     idx = 0
         #     for k, vv in zip(kps[iidx], vis_mask_[iidx]):
+        #         if idx < skip_idx:
+        #             idx += 1
+        #             continue
         #         if k[0] < 0 or k[1] < 0 or k[0] > im.size[0] or k[1] > im.size[1]:
         #             if (vv.item()):
         #                 os.path.create_dirs('out_of_range')
         #         this_bbox = bbt.box_by_shape((point_size, point_size), (int(k[0]), int(k[1])), image_boundary=im.size[::-1])
         #         imd.ellipse(this_bbox.pillow_bbox(), fill=((0, 255, 0) if vv.item() else (255, 0, 0)))
+        #         break
         #     return im
         # for idx in range(len(img)):
         #     foo(sample['img_ori'].permute(0, 2, 3, 1), kp, kpvis, iidx=idx).save(f'tem_{sample["instance_id"][idx]}.png')

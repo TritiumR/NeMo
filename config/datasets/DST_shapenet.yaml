@@ -8,7 +8,7 @@ synset_name:
     motorbike: "03790512"
 
 image_sizes: 512
-num_verts: 3072
+num_verts: 1024
 
 render_scale:
     car: 0.9

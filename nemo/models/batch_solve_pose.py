@@ -304,8 +304,8 @@ def solve_pose(
 
     # Step 3: Refine object proposals with pose optimization
     start_time = end_time
-    
-    if principal is not None and dof == 3:
+
+    if kwargs.get('distance_source') is not None:
         init_C = init_C / init_C.pow(2).sum(-1).pow(.5)[..., None] * kwargs.get('distance_source')[..., None].float()
 
     C = torch.nn.Parameter(init_C, requires_grad=True)

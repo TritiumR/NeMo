@@ -14,6 +14,7 @@ from capsule import Network
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 import point_cloud_utils as pcu
+import trimesh
 
 
 def fps(points, n_samples):
@@ -125,6 +126,21 @@ if config.cat_type == 'aeroplane':
     mesh_path = '../data/CorrData/DST_part3d/cad/n02690373'
     save_path = '../data/CorrData/DST_part3d/index/n02690373'
     chosen_instance = '22831bc32bd744d3f06dea205edf9704'
+if config.cat_type == 'jeep':
+    imgs_path = '../data/CorrData/DST_part3d/train/n03594945'
+    mesh_path = '../data/CorrData/DST_part3d/cad/n03594945'
+    save_path = '../data/CorrData/DST_part3d/index/n03594945'
+    chosen_instance = '178f22467bae4c729bdcc15dbc7e445d'
+if config.cat_type == 'sailboat':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02981792'
+    mesh_path = '../data/CorrData/DST_part3d/cad/n02981792'
+    save_path = '../data/CorrData/DST_part3d/index/n02981792'
+    chosen_instance = '76d0b1e24be14d2f9a524bfce3001aeb'
+if config.cat_type == 'bike':
+    imgs_path = '../data/CorrData/DST_part3d/train/n02835271'
+    mesh_path = '../data/CorrData/DST_part3d/cad/n02835271'
+    save_path = '../data/CorrData/DST_part3d/index/n02835271'
+    chosen_instance = ''
 else:
     raise NotImplementedError
 
@@ -136,13 +152,29 @@ instance_path = os.path.join(save_path, f'{chosen_instance}')
 if not os.path.exists(instance_path):
     os.makedirs(instance_path)
 
-mesh_fn = os.path.join(mesh_path, f"{chosen_instance}.obj")
-verts, _, _ = load_obj(mesh_fn)
-verts = verts.numpy()
+obj_fn = os.path.join(mesh_path, f"{chosen_instance}.obj")
+glb_fn = os.path.join(mesh_path, f"{chosen_instance}.glb")
 
-# normalize (scale: recon, offset:ori)
-vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2 * vert_scale
+if os.path.exists(obj_fn):
+    verts, _, _ = load_obj(obj_fn)
+    verts = verts.numpy()
+elif os.path.exists(glb_fn):
+    mesh = trimesh.load_mesh(glb_fn)
+    if isinstance(mesh, trimesh.Scene):
+        # Convert the scene to a single mesh
+        mesh = trimesh.util.concatenate(mesh.dump())
+
+    # Extract vertices and faces
+    verts = mesh.vertices
+    faces = mesh.faces
+else:
+    raise NotImplementedError
+
+# normalize
+vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5 / 2
+vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
+verts = verts - vert_middle
+verts = verts / vert_scale
 
 # decompose using point cloud
 v = verts
@@ -150,7 +182,7 @@ if os.path.exists(os.path.join(save_path, f'{chosen_instance}', 'index.npy')):
     prev_idx = np.load(os.path.join(save_path, f'{chosen_instance}', 'index.npy'), allow_pickle=True)[()]
     print('yes')
 else:
-    _, prev_idx = fps(v, num_precess_point)
+    prev_idx = np.random.choice(len(v), config.num_pts, replace=False)
 prev_x = torch.from_numpy(v[prev_idx]).to(device, dtype=torch.float32)
 R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
                        [-0.9333, 0.2898, 0.2122],
@@ -170,15 +202,32 @@ for instance_id in instance_ids:
     if not os.path.exists(instance_path):
         os.makedirs(instance_path)
 
+    obj_fn = os.path.join(mesh_path, f"{instance_id}.obj")
+    glb_fn = os.path.join(mesh_path, f"{instance_id}.glb")
+
     # using processed mesh
-    mesh_fn = os.path.join(mesh_path, f"{instance_id}.obj")
-    verts, _, _ = load_obj(mesh_fn)
-    verts = verts.numpy()
-    vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5
-    vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2 * vert_scale
+    if os.path.exists(obj_fn):
+        verts, _, _ = load_obj(obj_fn)
+        verts = verts.numpy()
+    elif os.path.exists(glb_fn):
+        mesh = trimesh.load_mesh(glb_fn)
+        if isinstance(mesh, trimesh.Scene):
+            # Convert the scene to a single mesh
+            mesh = trimesh.util.concatenate(mesh.dump())
+
+        # Extract vertices and faces
+        verts = mesh.vertices
+        faces = mesh.faces
+
+    vert_scale = ((verts.max(axis=0) - verts.min(axis=0)) ** 2).sum() ** 0.5 / 2
+    vert_middle = (verts.max(axis=0) + verts.min(axis=0)) / 2
+    verts = verts - vert_middle
+    verts = verts / vert_scale
 
     # decompose using point cloud
     v = verts
+    if len(v) < config.num_pts:
+        continue
     idx = np.random.choice(len(v), config.num_pts, replace=False)
     x = torch.from_numpy(v[idx]).to(device, dtype=torch.float32)
     R_can = torch.tensor([[[0.3456, 0.5633, 0.7505],
@@ -208,7 +257,6 @@ for instance_id in instance_ids:
 
         max_point = torch.argmax(vert_similarity)
         idx_list.append(max_point.item())
-        # print("max_point:", max_point.item(), "max_sim: ", max_sim)
 
     # # visualize last point correspondence
     # prev_label = np.zeros(config.num_pts)

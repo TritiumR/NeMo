@@ -135,6 +135,11 @@ elif config.cat_type == 'bench':
     recon_path = '../data/CorrData/DST_part3d/recon/n03891251'
     save_path = '../data/CorrData/DST_part3d/index/n03891251'
     chosen_instance = '1b0463c11f3cc1b3601104cd2d998272'
+elif config.cat_type == 'car':
+    imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/car'
+    recon_path = '/mnt/sde/angtian/data/ShapeNet/Reconstruct/car'
+    save_path = '../data/CorrData/DST_part3d/index/n03977966'
+    chosen_instance = '4d22bfe3097f63236436916a86a90ed7'
 else:
     raise NotImplementedError
 
@@ -167,6 +172,8 @@ np.save(os.path.join(save_path, f'{chosen_instance}', 'index.npy'), prev_idx)
 
 instance_ids = os.listdir(imgs_path)
 print('instance number: ', len(instance_ids))
+if config.cat_type == 'car':
+    instance_ids = ['511962626501e4abf500cc506a763c18']
 
 for instance_id in instance_ids:
     if '.' in instance_id or instance_id == chosen_instance:

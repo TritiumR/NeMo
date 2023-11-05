@@ -9,6 +9,7 @@ synset_name:
 
 image_sizes: 512
 num_verts: 1024
+mesh_type: ply
 
 render_scale:
     car: 0.9

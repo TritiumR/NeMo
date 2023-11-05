@@ -1,0 +1,6 @@
+name: pascal_image_part
+class_name: nemo.datasets.pascal_uda_part.PascalUDAPart
+root_path: data/CorrData
+
+num_verts: 3072
+image_sizes: 512

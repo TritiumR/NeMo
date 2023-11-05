@@ -92,7 +92,7 @@ class PackedRaster():
         feature_size = (
         image_size[0] // raster_configs.get('down_rate'), image_size[1] // raster_configs.get('down_rate'))
         cameras = PerspectiveCameras(
-            focal_length=raster_configs.get('focal_length', self.focal_length) / raster_configs.get('down_rate'),
+            focal_length=self.raster_configs.get('focal_length', self.focal_length) / raster_configs.get('down_rate'),
             principal_point=((feature_size[1] // 2, feature_size[0] // 2,),), image_size=(feature_size,), in_ndc=False,
             device=device)
         self.cameras = cameras
@@ -222,7 +222,7 @@ class PackedRaster():
         lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=self.focal_length,
+        cameras = PerspectiveCameras(focal_length=self.raster_configs.get('focal_length', self.focal_length),
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -277,7 +277,7 @@ class PackedRaster():
         lights = PointLights(device=self.cameras.device, location=((2.0, 2.0, -2.0),))
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=self.focal_length,
+        cameras = PerspectiveCameras(focal_length=self.raster_configs.get('focal_length', self.focal_length),
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -359,7 +359,7 @@ class PackedRaster():
         )
 
         # prepare camera
-        cameras = PerspectiveCameras(focal_length=self.focal_length,
+        cameras = PerspectiveCameras(focal_length=self.raster_configs.get('focal_length', self.focal_length),
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 
@@ -428,7 +428,7 @@ class PackedRaster():
             bin_size=0
         )
 
-        cameras = PerspectiveCameras(focal_length=self.focal_length,
+        cameras = PerspectiveCameras(focal_length=self.raster_configs.get('focal_length', self.focal_length),
                                      principal_point=((render_image_size[1] // 2, render_image_size[0] // 2),),
                                      image_size=(render_image_size,), device=self.cameras.device, in_ndc=False)
 

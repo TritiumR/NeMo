@@ -24,6 +24,7 @@ class MeshLoader():
             cate_id = '02958343'
             chosen_id = '4d22bfe3097f63236436916a86a90ed7'
             chosen_id1 = None
+            self.anno_parts = ['body', 'wheel', 'mirror']
         elif cate == 'aeroplane':
             self.skip_list = []
             self.ray_list = []
@@ -31,6 +32,7 @@ class MeshLoader():
             cate_id = '02691156'
             chosen_id = '3cb63efff711cfc035fc197bbabcd5bd'
             chosen_id1 = '1d63eb2b1f78aa88acf77e718d93f3e1'
+            self.anno_parts = ['head', 'body', 'engine', 'wing', 'tail']
         elif cate == 'boat':
             self.skip_list = []
             self.ray_list = []
@@ -38,6 +40,7 @@ class MeshLoader():
             cate_id = '04530566'
             chosen_id = '2340319ec4d93ae8c1df6b0203ecb359'
             chosen_id1 = None
+            self.anno_parts = ['body', 'sail']
         elif cate == 'chair':
             self.skip_list = []
             self.ray_list = []
@@ -52,6 +55,7 @@ class MeshLoader():
             cate_id = '02834778'
             chosen_id = '91k7HKqdM9'
             chosen_id1 = None
+            self.anno_parts = ['frame', 'handle', 'saddle', 'wheel']
         else:
             raise NotImplementedError
 
@@ -217,11 +221,13 @@ class PartsLoader():
             if cate in ['bicycle', 'boat']:
                 recon_mesh_path = os.path.join(dataset_config['root_path'], 'mesh', cate, f'{chosen_id}_recon_mesh.ply')
                 chosen_verts, _, _, _ = pcu.load_mesh_vfnc(recon_mesh_path)
+                vert_scale = ((chosen_verts.max(axis=0) - chosen_verts.min(axis=0)) ** 2).sum() ** 0.5
                 chosen_verts = torch.from_numpy(chosen_verts.astype(np.float32))
             else:
                 # load chosen mesh
                 ori_mesh_path = os.path.join(dataset_config['root_path'], 'ori_mesh', cate_id, chosen_id, 'models', 'model_normalized.obj')
                 chosen_verts, _, _ = load_obj(ori_mesh_path)
+                vert_scale = 1
             vert_middle = (chosen_verts.max(axis=0)[0] + chosen_verts.min(axis=0)[0]) / 2
             if chosen_id in ['1d63eb2b1f78aa88acf77e718d93f3e1', '3cb63efff711cfc035fc197bbabcd5bd']:
                 vert_middle[1] -= 0.08
@@ -245,6 +251,7 @@ class PartsLoader():
                         part_verts = torch.from_numpy(part_verts.astype(np.float32))
                         part_faces = torch.from_numpy(part_faces.astype(np.int32))
                         part_verts = part_verts - vert_middle
+                        part_verts = part_verts / vert_scale
                         part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
                         part_verts = part_verts - part_middle
                         offsets.append(np.array(part_middle))
@@ -261,6 +268,7 @@ class PartsLoader():
                         part_verts = torch.from_numpy(part_verts.astype(np.float32))
                         part_faces = torch.from_numpy(part_faces.astype(np.int32))
                         part_verts = part_verts - vert_middle
+                        part_verts = part_verts / vert_scale
                         part_middle = (part_verts.max(axis=0)[0] + part_verts.min(axis=0)[0]) / 2
                         part_verts = part_verts - part_middle
                         offsets.append(np.array(part_middle))
@@ -367,6 +375,10 @@ class SyntheticShapeNet(Dataset):
         self.ori_mesh = os.path.join(self.root_path, 'ori_mesh', cate_id)
 
         self.instance_list = [x for x in os.listdir(self.img_path) if '.' not in x]
+
+        if self.category == 'boat':
+            self.instance_list = ['246335e0dfc3a0ea834ac3b5e36b95c', '79a13d8bffa87b8ba8ae9698506bed5',
+                                  '884454f0d5a376c295ea46728bcdc15d']
 
         self.img_fns = []
         self.angle_fns = []

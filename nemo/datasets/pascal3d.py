@@ -33,7 +33,7 @@ class Pascal3DPlus(Dataset):
         segmentation_masks=[],
         **kwargs,
     ):
-        self.data_type = data_type
+        self.data_type = ""
         self.root_path = get_abs_path(root_path)
         self.category = category
         self.subtypes = subtypes if subtypes is not None else {}
@@ -54,9 +54,9 @@ class Pascal3DPlus(Dataset):
             self.category = [self.category]
         self.multi_cate = len(self.category) > 1
 
-        self.image_path = os.path.join(self.root_path, data_type, "images")
-        self.annotation_path = os.path.join(self.root_path, data_type, "annotations")
-        self.list_path = os.path.join(self.root_path, data_type, "lists")
+        self.image_path = os.path.join(self.root_path, self.data_type, "images")
+        self.annotation_path = os.path.join(self.root_path, self.data_type, "annotations")
+        self.list_path = os.path.join(self.root_path, self.data_type, "lists")
 
         num_verts = []
         for cate in self.category:
@@ -170,6 +170,7 @@ class Pascal3DPlus(Dataset):
             iskpvisible = np.pad(iskpvisible, pad_width=(0, pad_size), mode='constant', constant_values=False)
             index = np.array([self.max_n * label + k for k in range(self.max_n)])
 
+            # print('img: ', np.array(img).shape)
             sample = {
                 "this_name": this_name,
                 "cad_index": int(annotation_file["cad_index"]),

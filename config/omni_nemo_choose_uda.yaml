@@ -1,18 +1,18 @@
-dataset: config/datasets/pascalimagepart.yaml
-model: config/models/nemo_choose.yaml
+dataset: config/datasets/UDApart.yaml
+model: config/models/nemo_choose_uda.yaml
 
 task: image_part
 ori_mesh: False
 part_initialization: True
 use_pred: False
-part_consistency: True
+part_consistency: False
 
 training:
     batch_size: 10
     workers: 8
-    total_epochs: 1000
+    total_epochs: 800
     log_interval: 1
-    ckpt_interval: 200
+    ckpt_interval: 100
     visualize_training_data: false
     remove_no_bg: 8
     visual_kp: False
@@ -25,11 +25,11 @@ inference:
 
     search_translation: false
     optimize_translation: false
-    visual_pose: False
-    part_threshold: 0.60
+    visual_pose: True
+    part_threshold: 0.75
     nearest_k: 3
     dis_threshold: 0.01
-    on_corr_eps: 0.002
+    on_corr_eps: 0.001
     consistency_weight: 1
 
     px_sample:
@@ -47,7 +47,7 @@ inference:
     elev_sample:
         min_pi: -0.3333
         max_pi: 0.3333
-        num: 6
+        num: 12
     theta_sample:
         min_pi: -0.1667
         max_pi: 0.1667

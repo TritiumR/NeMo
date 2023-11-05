@@ -137,7 +137,8 @@ elif config.cat_type == 'boat':
     recon_path = '../data/CorrData/mesh/boat'
     ori_mesh_path = '/mnt/sde/angtian/data/ShapeNet/ShapeNetCore_v2/04530566'
     save_path = '../data/ShapeNet/Preprocess/boat'
-    chosen_instance = '2340319ec4d93ae8c1df6b0203ecb359'
+    # chosen_instance = '2340319ec4d93ae8c1df6b0203ecb359'
+    chosen_instance = '246335e0dfc3a0ea834ac3b5e36b95c'
 elif config.cat_type == 'bicycle':
     imgs_path = '/ccvl/net/ccvl15/jiahao/DST/DST-pose-fix-distance/Data_simple_512x512/test/bicycle'
     recon_path = '../data/CorrData/mesh/bicycle'

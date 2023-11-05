@@ -60,7 +60,10 @@ class NeMo(BaseModel):
         self.inference_params = inference
         self.dataset_config = cfg.dataset
         self.accumulate_steps = 0
-        self.num_verts = self.dataset_config.num_verts
+        if cate in ['car', 'aeroplane']:
+            self.num_verts = 3072
+        else:
+            self.num_verts = 1024
         self.visual_kp = cfg.training.visual_kp
         self.visual_mesh = cfg.training.visual_mesh
         self.visual_pose = cfg.inference.visual_pose
@@ -79,16 +82,23 @@ class NeMo(BaseModel):
             self.chosen_id = '4d22bfe3097f63236436916a86a90ed7'
             # self.chosen_ids = ['5edaef36af2826762bf75f4335c3829b', 'e0bf76446d320aa9aa69dfdc5532bb13', 'ea0d722f312d1262e0095a904eb93647',
             #                    'aeac711326961038939aeffada2c0c5', 'd2064d59beb9f24e8810bd18ea9969c']
-            self.chosen_ids = ['15a5e859e0de30e2afe1d4530f4c6e24', '372ceb40210589f8f500cc506a763c18', '4d22bfe3097f63236436916a86a90ed7',
-                               '560cef57d7fc0969b1bb46d2556ba67d']
-            self.anno_parts = ['body', 'wheel', 'mirror']
+            self.chosen_ids = ['372ceb40210589f8f500cc506a763c18', ]
         elif cate == 'aeroplane':
             self.chosen_id = '1d63eb2b1f78aa88acf77e718d93f3e1'
             self.chosen_ids = ['1d63eb2b1f78aa88acf77e718d93f3e1', ]
-            self.anno_parts = ['head', 'body', 'engine', 'wing', 'tail']
+        elif cate == 'boat':
+            self.chosen_id = '246335e0dfc3a0ea834ac3b5e36b95c'
+            self.chosen_ids = ['246335e0dfc3a0ea834ac3b5e36b95c']
+        elif cate == 'bicycle':
+            self.chosen_id = '91k7HKqdM9'
+            self.chosen_ids = ['91k7HKqdM9', 'LGj1dKhcY1', 'Mlb3AKfw61']
+        elif cate == 'airliner':
+            self.chosen_id = '22831bc32bd744d3f06dea205edf9704'
+            self.chosen_ids = ['22831bc32bd744d3f06dea205edf9704']
 
         self.parts_loader = PartsLoader(self.dataset_config, cate=cate, chosen_ids=self.chosen_ids)
         self.mesh_loader = MeshLoader(self.dataset_config, cate=cate)
+        self.anno_parts = self.mesh_loader.anno_parts
         self.build()
 
         self.raster_conf = {
@@ -233,8 +243,6 @@ class NeMo(BaseModel):
         self.loss_trackers['loss_main'].append(loss_main.item())
         self.loss_trackers['loss_reg'].append(loss_reg.item())
 
-        # print('loss: ', loss.item())
-
         return {'loss': loss.item(), 'loss_main': loss_main.item(), 'loss_reg': loss_reg.item()}
 
     def _build_inference(self):
@@ -312,6 +320,21 @@ class NeMo(BaseModel):
         mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]]
         get_mesh_index = self.mesh_loader.get_index_list(mesh_index).cuda()
 
+        if self.cfg.part_consistency:
+            self.nearest_pairs = []
+            verts_with_feature = chosen_verts[get_mesh_index[0]]
+            kdtree = KDTree(verts_with_feature)
+            dist, near_idx = kdtree.query(verts_with_feature, k=2)
+            dist = dist[:, 1]
+            near_idx = near_idx[:, 1]
+            nearest = np.argwhere(dist < self.cfg.inference.dis_threshold)
+            for idx in nearest:
+                # print('nearest: ', idx, near_idx[idx])
+                self.nearest_pairs.append((idx, near_idx[idx]))
+                self.nearest_pairs.append((near_idx[idx], idx))
+
+            print('len of pairs: ', len(self.nearest_pairs))
+
         self.inter_module = MeshInterpolateModule(
             xvert,
             xface,
@@ -341,6 +364,7 @@ class NeMo(BaseModel):
         self.parts_xvert = []
         self.parts_xface = []
         self.parts_offset = []
+        self.parts_indexes_on_corr = []
         for idx, chosen_id in enumerate(self.chosen_ids):
             part_xvert = self.parts_loader.get_part_mesh(chosen_id)[0]
             part_xface = self.parts_loader.get_part_mesh(chosen_id)[1]
@@ -350,10 +374,25 @@ class NeMo(BaseModel):
 
             # interpolate part features from memory_bank
             part_feature = []
+            part_indexes_on_corr = []
             kdtree = KDTree(verts_with_feature)
             for part_vert, off_set in zip(part_xvert, part_off_set):
+                if len(part_vert) == 1:
+                    part_feature.append(torch.zeros((1, 128)))
+                    part_indexes_on_corr.append(np.zeros(1, dtype=np.int32) - 1)
+                    continue
                 part_vert = part_vert + off_set
-                dist, nearest_idx = kdtree.query(part_vert, k=3)
+                dist, nearest_idx = kdtree.query(part_vert, k=self.cfg.inference.nearest_k)
+                # print('dist_min: ', dist.min())
+
+                # print('dist: ', dist.shape, nearest_idx.shape)
+
+                eps = self.cfg.inference.on_corr_eps
+                indexes_on_corr = np.zeros(len(part_vert), dtype=np.int32) - 1
+                indexes_on_corr[dist[:, 0] < eps] = nearest_idx[:, 0][dist[:, 0] < eps]
+                print('num of indexes_on_corr: ', len(indexes_on_corr[indexes_on_corr != -1]))
+                part_indexes_on_corr.append(indexes_on_corr)
+
                 dist = torch.from_numpy(dist).to(self.feature_bank.device) + 1e-4
                 dist = dist.type(torch.float32)
                 weight = torch.softmax(1 / dist, dim=1)
@@ -366,6 +405,7 @@ class NeMo(BaseModel):
             self.parts_xface.append([torch.from_numpy(part_face) for part_face in part_xface])
             self.parts_feature.append(part_feature)
             self.parts_offset.append(part_off_set)
+            self.parts_indexes_on_corr.append(part_indexes_on_corr)
 
         if self.cfg.task == 'part_locate':
             return
@@ -410,7 +450,7 @@ class NeMo(BaseModel):
         sample = self.transforms(sample)
         img = sample['img'].cuda()
 
-        mesh_index = [0] * img.shape[0]
+        mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]] * img.shape[0]
 
         kwargs_ = dict(indexs=mesh_index)
 
@@ -479,7 +519,7 @@ class NeMo(BaseModel):
         sample = self.transforms(sample)
         img = sample['img'].cuda()
 
-        mesh_index = [0] * img.shape[0]
+        mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]] * img.shape[0]
 
         kwargs_ = dict(indexs=mesh_index)
 
@@ -557,11 +597,16 @@ class NeMo(BaseModel):
             min_idx = None
             min_scale = None
             min_offset = None
+            max_score = None
             for chosen_idx in range(len(self.chosen_ids)):
                 part_vert = [self.parts_xvert[chosen_idx][part_id]]
                 part_face = [self.parts_xface[chosen_idx][part_id]]
                 part_feature = [self.parts_feature[chosen_idx][part_id]]
                 part_offsets = self.parts_offset[chosen_idx][part_id]
+
+                if part_vert[0].shape[0] == 1:
+                    print(self.chosen_ids[chosen_idx], 'has no ', part_name)
+                    continue
 
                 part_inter_module = MeshInterpolateModule(
                     part_vert,
@@ -574,7 +619,7 @@ class NeMo(BaseModel):
                 ).to(self.device)
 
                 if self.cfg.part_initialization is True:
-                    loss, offset, scale = part_initialization(
+                    loss, offset, scale, score = part_initialization(
                         self.cfg,
                         feature_map,
                         self.clutter_bank,
@@ -584,7 +629,7 @@ class NeMo(BaseModel):
                         part_offsets,
                     )
                 else:
-                    loss, scale = batch_only_scale(
+                    loss, scale, score = batch_only_scale(
                         self.cfg,
                         feature_map,
                         self.clutter_bank,
@@ -593,21 +638,32 @@ class NeMo(BaseModel):
                         initial_pose,
                         part_offsets,
                     )
-
+                if max_score is None or score > max_score:
+                    max_score = score
                 if min_loss is None or loss < min_loss:
                     min_loss = loss
                     min_idx = chosen_idx
                     min_scale = scale
                     min_offset = offset
 
-            chosen_indexes.append(min_idx)
-            chosen_scales.append(min_scale)
-            chosen_offsets.append(min_offset)
+            if max_score > 0:
+                chosen_indexes.append(min_idx)
+                chosen_scales.append(min_scale)
+                chosen_offsets.append(min_offset)
+            else:
+                chosen_indexes.append(-1)
 
-        parts_xvert = [self.parts_xvert[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_xface = [self.parts_xface[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_feature = [self.parts_feature[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_offset = [self.parts_offset[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
+        parts_xvert = []
+        parts_xface = []
+        parts_feature = []
+        parts_offset = []
+        for idx, chosen_idx in enumerate(chosen_indexes):
+            if chosen_idx != -1:
+                parts_xvert.append(self.parts_xvert[chosen_idx][idx])
+                parts_xface.append(self.parts_xface[chosen_idx][idx])
+                parts_feature.append(self.parts_feature[chosen_idx][idx])
+                parts_offset.append(self.parts_offset[chosen_idx][idx])
+
         # print('chosen_scales: ', chosen_scales)
         kwargs_ = dict(chosen_scales=chosen_scales, chosen_offsets=chosen_offsets)
 
@@ -658,13 +714,21 @@ class NeMo(BaseModel):
             print('wrong img shape')
             return None
 
+
         mesh_index = [0] * img.shape[0]
+        vis_mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]] * img.shape[0]
+        print('mesh_index: ', mesh_index)
 
         kwargs_ = dict(indexs=mesh_index)
 
         with torch.no_grad():
             feature_map = self.net.module.forward_test(img)
-        if 'batch' in self.init_mode:
+
+        if self.cfg.use_pred and sample['pose_pred'] == 0:
+            return None
+        pose_pred = []
+        if not self.cfg.use_pred:
+            print('sample distance: ', sample['distance'])
             dof = int(self.init_mode.split('d_')[0])
 
             preds = batch_solve_pose(
@@ -677,47 +741,47 @@ class NeMo(BaseModel):
                 feature_pre_rendered=self.feature_pre_rendered,
                 device=self.device,
                 principal=None,
-                distance_source=sample['distance'].to(feature_map.device) if dof == 3 else torch.ones(
-                    feature_map.shape[0]).to(feature_map.device),
+                distance_source=sample['distance'].to(feature_map.device) if dof == 3 else None,
                 distance_target=self.record_distance * torch.ones(feature_map.shape[0]).to(
                     feature_map.device) if dof == 3 else torch.ones(feature_map.shape[0]).to(feature_map.device),
                 pre_render=self.cfg.inference.get('pre_render', True),
                 dof=dof,
                 **kwargs_
             )
+            if isinstance(preds, dict):
+                preds = [preds]
+
+            for i, pred in enumerate(preds):
+                pose_pred.append(pred["final"][0])
+                if "azimuth" in sample and "elevation" in sample and "theta" in sample:
+                    pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
+                                                    pred["final"][0])
+                    print('pose_error: ', pred["pose_error"])
+                else:
+                    pred["pose_error"] = np.random.rand()
+
+            if self.visual_pose:
+                for idx in range(len(img)):
+                    self.projector.visual_pose(vis_mesh_index[idx], sample['img_ori'][idx], preds[idx]["final"][0],
+                                               self.folder, preds[idx]["pose_error"])
+
+            distances = torch.from_numpy(np.array([pred["final"][0]['distance'] for pred in preds])).cuda()
+            elevations = torch.from_numpy(np.array([pred["final"][0]['elevation'] for pred in preds])).cuda()
+            azimuths = torch.from_numpy(np.array([pred["final"][0]['azimuth'] for pred in preds])).cuda()
+            thetas = torch.from_numpy(np.array([pred["final"][0]['theta'] for pred in preds])).cuda()
         else:
-            assert len(img) == 1, "The batch size during validation should be 1"
-            preds = solve_pose(
-                self.cfg,
-                feature_map,
-                self.inter_module,
-                self.kp_features,
-                self.clutter_bank,
-                self.poses,
-                self.kp_coords,
-                self.kp_vis,
-                debug=debug,
-                device=self.device,
-                **kwargs_
-            )
-        if isinstance(preds, dict):
-            preds = [preds]
+            preds = sample['pose_pred']
+            if isinstance(preds, dict):
+                preds = [preds]
 
-        for i, pred in enumerate(preds):
-            if "azimuth" in sample and "elevation" in sample and "theta" in sample:
-                pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
-                                                pred["final"][0])
-                print('pose_error: ', pred["pose_error"])
+            pose_pred = preds
 
-        if self.visual_pose:
-            for idx in range(len(img)):
-                self.projector.visual_pose(mesh_index[idx], sample['img_ori'][idx], preds[idx]["final"][0],
-                                           self.folder, preds[idx]["pose_error"])
+            distances = torch.from_numpy(np.array([pred['distance'] for pred in preds])).cuda()
+            elevations = torch.from_numpy(np.array([pred['elevation'] for pred in preds])).cuda()
+            azimuths = torch.from_numpy(np.array([pred['azimuth'] for pred in preds])).cuda()
+            thetas = torch.from_numpy(np.array([pred['theta'] for pred in preds])).cuda()
 
-        distances = torch.from_numpy(np.array([pred["final"][0]['distance'] for pred in preds])).cuda()
-        elevations = torch.from_numpy(np.array([pred["final"][0]['elevation'] for pred in preds])).cuda()
-        azimuths = torch.from_numpy(np.array([pred["final"][0]['azimuth'] for pred in preds])).cuda()
-        thetas = torch.from_numpy(np.array([pred["final"][0]['theta'] for pred in preds])).cuda()
+        print('distances: ', distances)
         initial_pose = dict(
             distance=distances,
             elevation=elevations,
@@ -734,11 +798,16 @@ class NeMo(BaseModel):
             min_idx = None
             min_scale = None
             min_offset = None
+            max_score = None
             for chosen_idx in range(len(self.chosen_ids)):
                 part_vert = [self.parts_xvert[chosen_idx][part_id]]
                 part_face = [self.parts_xface[chosen_idx][part_id]]
                 part_feature = [self.parts_feature[chosen_idx][part_id]]
                 part_offsets = self.parts_offset[chosen_idx][part_id]
+
+                if part_vert[0].shape[0] == 1:
+                    print(self.chosen_ids[chosen_idx], 'has no', part_name)
+                    continue
 
                 part_inter_module = MeshInterpolateModule(
                     part_vert,
@@ -751,7 +820,7 @@ class NeMo(BaseModel):
                 ).to(self.device)
 
                 if self.cfg.part_initialization is True:
-                    loss, offset, scale = part_initialization(
+                    loss, offset, scale, score = part_initialization(
                         self.cfg,
                         feature_map,
                         self.clutter_bank,
@@ -761,7 +830,7 @@ class NeMo(BaseModel):
                         part_offsets,
                     )
                 else:
-                    loss, scale = batch_only_scale(
+                    loss, scale, score = batch_only_scale(
                         self.cfg,
                         feature_map,
                         self.clutter_bank,
@@ -771,99 +840,448 @@ class NeMo(BaseModel):
                         part_offsets,
                     )
 
+                if max_score is None or score > max_score:
+                    max_score = score
+
                 if min_loss is None or loss < min_loss:
                     min_loss = loss
                     min_idx = chosen_idx
                     min_scale = scale
                     min_offset = offset
 
-            chosen_indexes.append(min_idx)
-            chosen_scales.append(min_scale)
-            if min_offset is not None:
-                chosen_offsets.append(min_offset)
+            if max_score > 0:
+                chosen_indexes.append(min_idx)
+                chosen_scales.append(min_scale)
+                if min_offset is not None:
+                    chosen_offsets.append(min_offset[0])
+            else:
+                print('no part ', part_name)
+                chosen_indexes.append(-1)
 
-        parts_xvert = [self.parts_xvert[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_xface = [self.parts_xface[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_feature = [self.parts_feature[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        parts_offset = [self.parts_offset[chosen_idx][idx] for idx, chosen_idx in enumerate(chosen_indexes)]
-        # print('chosen_scales: ', chosen_scales)
+        parts_xvert = []
+        parts_xface = []
+        parts_feature = []
+        parts_offset = []
+        parts_name = []
+        for idx, chosen_idx in enumerate(chosen_indexes):
+            if chosen_idx != -1:
+                parts_xvert.append(self.parts_xvert[chosen_idx][idx])
+                parts_xface.append(self.parts_xface[chosen_idx][idx])
+                parts_feature.append(self.parts_feature[chosen_idx][idx])
+                parts_offset.append(self.parts_offset[chosen_idx][idx])
+                parts_name.append(self.parts_loader.get_name_listed()[idx])
+
         kwargs_ = dict(chosen_scales=chosen_scales, chosen_offsets=chosen_offsets)
 
-        parts_inter_module = MeshInterpolateModule(
-            parts_xvert,
-            parts_xface,
-            self.feature_bank,
-            rasterizer=self.rasterizer,
-            post_process=None,
-            interpolate_index=None,
-            features=parts_feature,
-        ).to(self.device)
+        if len(parts_name) > 0:
+            if self.cfg.part_consistency is True:
+                parts_indexes_on_corr = []
+                for idx, chosen_idx in enumerate(chosen_indexes):
+                    if chosen_idx != -1:
+                        parts_indexes_on_corr.append(self.parts_indexes_on_corr[chosen_idx][idx])
 
-        part_preds = batch_solve_part_whole(
-            self.cfg,
-            feature_map,
-            self.clutter_bank,
-            parts_inter_module,
-            parts_feature,
-            initial_pose,
-            parts_offset,
-            **kwargs_
-        )
+                near_pairs = []
+                for pair in self.nearest_pairs:
+                    id1, id2 = pair
+                    # print('0000')
+                    index_offset_1 = 0
+                    for part_id_1 in range(len(parts_name)):
+                        if part_id_1 > 0:
+                            index_offset_1 += len(parts_xvert[part_id_1 - 1])
+                        if id1 in parts_indexes_on_corr[part_id_1]:
+                            # print('1111')
+                            # print('find: ', np.where(parts_indexes_on_corr[part_id_1] == id1)[0][0])
+                            index_1 = np.where(parts_indexes_on_corr[part_id_1] == id1)[0][0] + index_offset_1
+                            index_offset_2 = index_offset_1
+                            for part_id_2 in range(part_id_1 + 1, len(parts_name)):
+                                index_offset_2 += len(parts_xvert[part_id_2 - 1])
+                                if id2 in parts_indexes_on_corr[part_id_2]:
+                                    # print('2222')
+                                    index_2 = np.where(parts_indexes_on_corr[part_id_2] == id2)[0][0] + index_offset_2
+                                    near_pairs.append((index_1, index_2))
+                                if id1 in parts_indexes_on_corr[part_id_2]:
+                                    # print('2222')
+                                    index_2 = np.where(parts_indexes_on_corr[part_id_2] == id1)[0][0] + index_offset_2
+                                    if (index_1, index_2) not in near_pairs:
+                                        near_pairs.append((index_1, index_2))
 
-        # parts_xvert = []
-        # parts_xface = []
-        # for idx, name in enumerate(self.parts_loader.get_name_listed()):
-        #     part_vert, part_face = self.parts_loader.get_ori_part(self.chosen_ids[chosen_indexes[idx]], name)
-        #     parts_xvert.append(part_vert)
-        #     parts_xface.append(part_face)
-        #
-        parts_xvert = [part_vert.numpy() for part_vert in parts_xvert]
-        parts_xface = [part_face.numpy() for part_face in parts_xface]
+                print('near_pairs: ', len(near_pairs))
+                kwargs_['near_pairs'] = near_pairs
 
+            parts_inter_module = MeshInterpolateModule(
+                parts_xvert,
+                parts_xface,
+                self.feature_bank,
+                rasterizer=self.rasterizer,
+                post_process=None,
+                interpolate_index=None,
+                features=parts_feature,
+            ).to(self.device)
+
+            part_preds = batch_solve_part_whole(
+                self.cfg,
+                feature_map,
+                self.clutter_bank,
+                parts_inter_module,
+                parts_feature,
+                initial_pose,
+                parts_offset,
+                **kwargs_
+            )
+
+            # parts_xvert = []
+            # parts_xface = []
+            # for idx, name in enumerate(self.parts_loader.get_name_listed()):
+            #     if chosen_indexes[idx] != -1:
+            #         part_vert, part_face = self.parts_loader.get_ori_part(self.chosen_ids[chosen_indexes[idx]], name)
+            #         parts_xvert.append(part_vert)
+            #         parts_xface.append(part_face)
+            # #
+            parts_xvert = [part_vert.numpy() for part_vert in parts_xvert]
+            parts_xface = [part_face.numpy() for part_face in parts_xface]
+
+            segment = self.projector.get_segment_depth(parts_xvert, parts_xface, pose_pred[0],
+                                                       part_preds[0]["final"])
+        else:
+            segment = np.ones((512, 512)) * len(self.anno_parts)
         annotations = sample['seg']
         vis_imgs = sample['img_ori'].numpy()
         iou_dict = dict()
-        for idx in range(len(img)):
-            segment = self.projector.get_segment_depth(parts_xvert, parts_xface, preds[idx]["final"][0],
-                                                 part_preds[idx]["final"])
+        print('segment: ', segment.min(), segment.max())
 
-            anno = annotations[idx].type(torch.int32)
-            seg = torch.zeros_like(anno) + len(self.anno_parts)
+        img_mask = np.sum(vis_imgs[0], axis=2) > 0
+        # segment[~img_mask] = -1
 
-            total_intersection = 0
-            total_union = 0
-            for anno_id, name in enumerate(self.anno_parts):
-                for part_id, part_name in enumerate(self.parts_loader.get_name_listed()):
-                    if name in part_name:
-                        seg[segment == part_id] = anno_id
-                intersection = ((seg == anno_id) & (anno == anno_id)).sum()
-                union = ((seg == anno_id) | (anno == anno_id)).sum()
-                iou = intersection / union
-                print(f'{name} IOU: ', iou)
-                iou_dict[name] = iou
-                total_intersection += intersection
-                total_union += union
+        anno = annotations[0].type(torch.int32)
+        anno_compare = anno[img_mask]
+        seg = torch.zeros_like(anno) + len(self.anno_parts)
 
-            miou = total_intersection / total_union
-            print('mIoU: ', miou)
-            iou_dict['mIoU'] = miou
+        total_intersection = 0
+        total_union = 0
+        intersections = []
+        unions = []
+        for anno_id, name in enumerate(self.anno_parts):
+            for part_id, part_name in enumerate(parts_name):
+                if name in part_name:
+                    seg[segment == part_id] = anno_id
 
-            save_path = './visual/segment/' + self.folder
-            if not os.path.exists(save_path):
-                os.makedirs(save_path)
-            vis_get = seg.clone() / seg.max() * 255
-            vis_get = vis_get.detach().cpu().numpy().astype(np.uint8)
-            vis_get = Image.fromarray(vis_get)
-            vis_get.save(f'{save_path}/{miou}_seg.jpg')
+            seg_compare = seg[img_mask]
 
-            vis_img = vis_imgs[idx].astype(np.uint8)
-            vis_img = Image.fromarray(vis_img)
-            vis_img.save(f'{save_path}/{miou}_ori.png')
+            intersection = ((seg_compare == anno_id) & (anno_compare == anno_id)).sum()
+            union = ((seg_compare == anno_id) | (anno_compare == anno_id)).sum()
+            iou = intersection / union
+            # print(f'{name} IOU: ', iou)
+            iou_dict[name] = iou
+            total_intersection += intersection
+            total_union += union
+            intersections.append(intersection)
+            unions.append(union)
 
-            vis_anno = anno.clone() / anno.max() * 255
-            vis_anno = vis_anno.numpy().astype(np.uint8)
-            vis_anno = Image.fromarray(vis_anno)
-            vis_anno.save(f'{save_path}/{miou}_gt.png')
+        seg_compare = seg[img_mask]
+        bg_intersection = ((seg_compare == len(self.anno_parts)) & (anno_compare == len(self.anno_parts))).sum()
+        bg_union = ((seg_compare == len(self.anno_parts)) | (anno_compare == len(self.anno_parts))).sum()
+        total_intersection += bg_intersection
+        total_union += bg_union
+        bg_iou = bg_intersection / bg_union
+        intersections.append(bg_intersection)
+        unions.append(bg_union)
+        iou_dict['bg'] = bg_iou
+
+        miou = total_intersection / total_union
+        iou_dict['mIoU'] = miou
+
+        iou_dict['intersections'] = intersections
+        iou_dict['unions'] = unions
+
+        save_path = './visual/segment/' + self.folder
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        vis_get = seg.clone() / seg.max() * 255
+        vis_get = vis_get.detach().cpu().numpy().astype(np.uint8)
+        vis_get = Image.fromarray(vis_get)
+        vis_get.save(f'{save_path}/{miou}_seg.jpg')
+
+        vis_img = vis_imgs[0].astype(np.uint8)
+        vis_img = Image.fromarray(vis_img)
+        vis_img.save(f'{save_path}/{miou}_ori.png')
+
+        vis_anno = anno.clone() / anno.max() * 255
+        vis_anno = vis_anno.numpy().astype(np.uint8)
+        vis_anno = Image.fromarray(vis_anno)
+        vis_anno.save(f'{save_path}/{miou}_gt.png')
+
+        return iou_dict
+
+    def evaluate_dst_part(self, sample, debug=False):
+        self.net.eval()
+
+        sample = self.transforms(sample)
+        img = sample['img'].cuda()
+
+        mesh_index = [0] * img.shape[0]
+        vis_mesh_index = [self.mesh_loader.mesh_name_dict[self.chosen_id]] * img.shape[0]
+
+        kwargs_ = dict(indexs=mesh_index)
+
+        with torch.no_grad():
+            feature_map = self.net.module.forward_test(img)
+
+        pose_pred = []
+        print('sample distance: ', sample['distance'])
+        dof = int(self.init_mode.split('d_')[0])
+
+        preds = batch_solve_pose(
+            self.cfg,
+            feature_map,
+            self.inter_module,
+            self.clutter_bank,
+            cam_pos_pre_rendered=self.cam_pos_pre_rendered,
+            theta_pre_rendered=self.theta_pre_rendered,
+            feature_pre_rendered=self.feature_pre_rendered,
+            device=self.device,
+            principal=None,
+            distance_source=sample['distance'].to(feature_map.device),
+            distance_target=self.record_distance * torch.ones(feature_map.shape[0]).to(
+                feature_map.device) if dof == 3 else torch.ones(feature_map.shape[0]).to(feature_map.device),
+            pre_render=self.cfg.inference.get('pre_render', True),
+            dof=dof,
+            **kwargs_
+        )
+        if isinstance(preds, dict):
+            preds = [preds]
+
+        for i, pred in enumerate(preds):
+            pose_pred.append(pred["final"][0])
+            if "azimuth" in sample and "elevation" in sample and "theta" in sample:
+                pred["pose_error"] = pose_error({k: sample[k][i] for k in ["azimuth", "elevation", "theta"]},
+                                                pred["final"][0])
+                print('pose_error: ', pred["pose_error"])
+            else:
+                pred["pose_error"] = np.random.rand()
+
+        if self.visual_pose:
+            for idx in range(len(img)):
+                self.projector.visual_pose(vis_mesh_index[idx], sample['img_ori'][idx], preds[idx]["final"][0],
+                                           self.folder, preds[idx]["pose_error"])
+
+        distances = torch.from_numpy(np.array([pred["final"][0]['distance'] for pred in preds])).cuda()
+        elevations = torch.from_numpy(np.array([pred["final"][0]['elevation'] for pred in preds])).cuda()
+        azimuths = torch.from_numpy(np.array([pred["final"][0]['azimuth'] for pred in preds])).cuda()
+        thetas = torch.from_numpy(np.array([pred["final"][0]['theta'] for pred in preds])).cuda()
+
+        print('distances: ', distances)
+        initial_pose = dict(
+            distance=distances,
+            elevation=elevations,
+            azimuth=azimuths,
+            theta=thetas,
+        )
+
+        chosen_indexes = []
+        chosen_scales = []
+        chosen_offsets = []
+        offset = None
+        for part_id, part_name in enumerate(self.parts_loader.get_name_listed()):
+            min_loss = None
+            min_idx = None
+            min_scale = None
+            min_offset = None
+            max_score = None
+            for chosen_idx in range(len(self.chosen_ids)):
+                part_vert = [self.parts_xvert[chosen_idx][part_id]]
+                part_face = [self.parts_xface[chosen_idx][part_id]]
+                part_feature = [self.parts_feature[chosen_idx][part_id]]
+                part_offsets = self.parts_offset[chosen_idx][part_id]
+
+                if part_vert[0].shape[0] == 1:
+                    print(self.chosen_ids[chosen_idx], 'has no', part_name)
+                    continue
+
+                part_inter_module = MeshInterpolateModule(
+                    part_vert,
+                    part_face,
+                    self.feature_bank,
+                    rasterizer=self.rasterizer,
+                    post_process=None,
+                    interpolate_index=None,
+                    features=part_feature,
+                ).to(self.device)
+
+                if self.cfg.part_initialization is True:
+                    loss, offset, scale, score = part_initialization(
+                        self.cfg,
+                        feature_map,
+                        self.clutter_bank,
+                        part_inter_module,
+                        part_feature,
+                        initial_pose,
+                        part_offsets,
+                    )
+                else:
+                    loss, scale, score = batch_only_scale(
+                        self.cfg,
+                        feature_map,
+                        self.clutter_bank,
+                        part_inter_module,
+                        part_feature,
+                        initial_pose,
+                        part_offsets,
+                    )
+
+                if max_score is None or score > max_score:
+                    max_score = score
+
+                if min_loss is None or loss < min_loss:
+                    min_loss = loss
+                    min_idx = chosen_idx
+                    min_scale = scale
+                    min_offset = offset
+
+            if max_score > 0:
+                chosen_indexes.append(min_idx)
+                chosen_scales.append(min_scale)
+                if min_offset is not None:
+                    chosen_offsets.append(min_offset[0])
+            else:
+                print('no part ', part_name)
+                chosen_indexes.append(-1)
+
+        parts_xvert = []
+        parts_xface = []
+        parts_feature = []
+        parts_offset = []
+        parts_name = []
+        for idx, chosen_idx in enumerate(chosen_indexes):
+            if chosen_idx != -1:
+                parts_xvert.append(self.parts_xvert[chosen_idx][idx])
+                parts_xface.append(self.parts_xface[chosen_idx][idx])
+                parts_feature.append(self.parts_feature[chosen_idx][idx])
+                parts_offset.append(self.parts_offset[chosen_idx][idx])
+                parts_name.append(self.parts_loader.get_name_listed()[idx])
+
+        kwargs_ = dict(chosen_scales=chosen_scales, chosen_offsets=chosen_offsets)
+
+        if len(parts_name) > 0:
+            if self.cfg.part_consistency is True:
+                parts_indexes_on_corr = []
+                for idx, chosen_idx in enumerate(chosen_indexes):
+                    if chosen_idx != -1:
+                        parts_indexes_on_corr.append(self.parts_indexes_on_corr[chosen_idx][idx])
+
+                near_pairs = []
+                for pair in self.nearest_pairs:
+                    id1, id2 = pair
+                    index_offset_1 = 0
+                    for part_id_1 in range(len(parts_name)):
+                        if part_id_1 > 0:
+                            index_offset_1 += len(parts_xvert[part_id_1 - 1])
+                        if id1 in parts_indexes_on_corr[part_id_1]:
+                            index_1 = np.where(parts_indexes_on_corr[part_id_1] == id1)[0][0] + index_offset_1
+                            index_offset_2 = index_offset_1
+                            for part_id_2 in range(part_id_1 + 1, len(parts_name)):
+                                index_offset_2 += len(parts_xvert[part_id_2 - 1])
+                                if id2 in parts_indexes_on_corr[part_id_2]:
+                                    index_2 = np.where(parts_indexes_on_corr[part_id_2] == id2)[0][0] + index_offset_2
+                                    near_pairs.append((index_1, index_2))
+                                if id1 in parts_indexes_on_corr[part_id_2]:
+                                    index_2 = np.where(parts_indexes_on_corr[part_id_2] == id1)[0][0] + index_offset_2
+                                    if (index_1, index_2) not in near_pairs:
+                                        near_pairs.append((index_1, index_2))
+
+                print('near_pairs: ', len(near_pairs))
+                kwargs_['near_pairs'] = near_pairs
+
+            parts_inter_module = MeshInterpolateModule(
+                parts_xvert,
+                parts_xface,
+                self.feature_bank,
+                rasterizer=self.rasterizer,
+                post_process=None,
+                interpolate_index=None,
+                features=parts_feature,
+            ).to(self.device)
+
+            part_preds = batch_solve_part_whole(
+                self.cfg,
+                feature_map,
+                self.clutter_bank,
+                parts_inter_module,
+                parts_feature,
+                initial_pose,
+                parts_offset,
+                **kwargs_
+            )
+
+            parts_xvert = [part_vert.numpy() for part_vert in parts_xvert]
+            parts_xface = [part_face.numpy() for part_face in parts_xface]
+
+            segment = self.projector.get_segment_depth(parts_xvert, parts_xface, pose_pred[0],
+                                                       part_preds[0]["final"])
+        else:
+            segment = np.ones((512, 512)) * len(self.anno_parts)
+        annotations = sample['seg']
+        vis_imgs = sample['img_ori'].numpy()
+        iou_dict = dict()
+        print('segment: ', segment.min(), segment.max())
+
+        img_mask = np.sum(vis_imgs[0], axis=2) > 0
+
+        anno = annotations[0].type(torch.int32)
+        anno_compare = anno[img_mask]
+        seg = torch.zeros_like(anno) + len(self.anno_parts)
+
+        total_intersection = 0
+        total_union = 0
+        intersections = []
+        unions = []
+        for anno_id, name in enumerate(self.anno_parts):
+            for part_id, part_name in enumerate(parts_name):
+                if name in part_name:
+                    seg[segment == part_id] = anno_id
+
+            seg_compare = seg[img_mask]
+
+            intersection = ((seg_compare == anno_id) & (anno_compare == anno_id)).sum()
+            union = ((seg_compare == anno_id) | (anno_compare == anno_id)).sum()
+            iou = intersection / union
+            iou_dict[name] = iou
+            total_intersection += intersection
+            total_union += union
+            intersections.append(intersection)
+            unions.append(union)
+
+        seg_compare = seg[img_mask]
+        bg_intersection = ((seg_compare == len(self.anno_parts)) & (anno_compare == len(self.anno_parts))).sum()
+        bg_union = ((seg_compare == len(self.anno_parts)) | (anno_compare == len(self.anno_parts))).sum()
+        total_intersection += bg_intersection
+        total_union += bg_union
+        bg_iou = bg_intersection / bg_union
+        intersections.append(bg_intersection)
+        unions.append(bg_union)
+        iou_dict['bg'] = bg_iou
+
+        miou = total_intersection / total_union
+        iou_dict['mIoU'] = miou
+
+        iou_dict['intersections'] = intersections
+        iou_dict['unions'] = unions
+
+        save_path = './visual/segment/' + self.folder
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        vis_get = seg.clone() / seg.max() * 255
+        vis_get = vis_get.detach().cpu().numpy().astype(np.uint8)
+        vis_get = Image.fromarray(vis_get)
+        vis_get.save(f'{save_path}/{miou}_seg.jpg')
+
+        vis_img = vis_imgs[0].astype(np.uint8)
+        vis_img = Image.fromarray(vis_img)
+        vis_img.save(f'{save_path}/{miou}_ori.png')
+
+        vis_anno = anno.clone() / anno.max() * 255
+        vis_anno = vis_anno.numpy().astype(np.uint8)
+        vis_anno = Image.fromarray(vis_anno)
+        vis_anno.save(f'{save_path}/{miou}_gt.png')
 
         return iou_dict
 

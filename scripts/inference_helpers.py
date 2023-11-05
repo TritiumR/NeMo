@@ -171,6 +171,71 @@ def inference_image_part(
         sail_intersections = 0
         body_unions = 0
         sail_unions = 0
+    elif cate == 'airliner':
+        anno_parts = ['engine', 'fuselarge', 'wing', 'vertical_stabilizer', 'wheel', 'horizontal_stabilizer']
+        engine_intersections = 0
+        fuselarge_intersections = 0
+        wing_intersections = 0
+        vertical_stabilizer_intersections = 0
+        wheel_intersections = 0
+        horizontal_stabilizer_intersections = 0
+        engine_unions = 0
+        fuselarge_unions = 0
+        wing_unions = 0
+        vertical_stabilizer_unions = 0
+        wheel_unions = 0
+        horizontal_stabilizer_unions = 0
+    elif cate == 'police':
+        anno_parts = ['wheel', 'front_trunk', 'body']
+        wheel_intersections = 0
+        front_trunk_intersections = 0
+        body_intersections = 0
+        wheel_unions = 0
+        front_trunk_unions = 0
+        body_unions = 0
+    elif cate == 'police1':
+        anno_parts = ['wheel', 'door', 'front_trunk', 'back_trunk', 'frame', 'mirror']
+        wheel_intersections = 0
+        door_intersections = 0
+        front_trunk_intersections = 0
+        back_trunk_intersections = 0
+        frame_intersections = 0
+        mirror_intersections = 0
+        wheel_unions = 0
+        door_unions = 0
+        front_trunk_unions = 0
+        back_trunk_unions = 0
+        frame_unions = 0
+        mirror_unions = 0
+    elif cate == 'bench':
+        anno_parts = ['backrest', 'seat', 'side']
+        backrest_intersections = 0
+        seat_intersections = 0
+        side_intersections = 0
+        backrest_unions = 0
+        seat_unions = 0
+        side_unions = 0
+    elif cate == 'sailboat':
+        anno_parts = ['sail', 'body']
+        sail_intersections = 0
+        body_intersections = 0
+        sail_unions = 0
+        body_unions = 0
+    elif cate == 'bike':
+        anno_parts = ['wheel', 'handlebar', 'saddle', 'frame']
+        wheel_intersections = 0
+        handlebar_intersections = 0
+        saddle_intersections = 0
+        frame_intersections = 0
+    elif cate == 'car_uda':
+        anno_parts = ['body', 'wheel', 'mirror']
+        body_intersections = 0
+        wheel_intersections = 0
+        mirror_intersections = 0
+        body_unions = 0
+        wheel_unions = 0
+        mirror_unions = 0
+
     bg_intersections = 0
     bg_unions = 0
     mious = []
@@ -221,6 +286,82 @@ def inference_image_part(
                 body_unions += results['unions'][0]
                 sail_unions += results['unions'][1]
                 bg_unions += results['unions'][2]
+            elif cate == 'airliner':
+                engine_intersections += results['intersections'][0]
+                fuselarge_intersections += results['intersections'][1]
+                wing_intersections += results['intersections'][2]
+                vertical_stabilizer_intersections += results['intersections'][3]
+                wheel_intersections += results['intersections'][4]
+                horizontal_stabilizer_intersections += results['intersections'][5]
+                bg_intersections += results['intersections'][6]
+                engine_unions += results['unions'][0]
+                fuselarge_unions += results['unions'][1]
+                wing_unions += results['unions'][2]
+                vertical_stabilizer_unions += results['unions'][3]
+                wheel_unions += results['unions'][4]
+                horizontal_stabilizer_unions += results['unions'][5]
+                bg_unions += results['unions'][6]
+            elif cate == 'police':
+                wheel_intersections += results['intersections'][0]
+                front_trunk_intersections += results['intersections'][1]
+                body_intersections += results['intersections'][2]
+                bg_intersections += results['intersections'][3]
+                wheel_unions += results['unions'][0]
+                front_trunk_unions += results['unions'][1]
+                body_unions += results['unions'][2]
+                bg_unions += results['unions'][3]
+            elif cate == 'police1':
+                wheel_intersections += results['intersections'][0]
+                door_intersections += results['intersections'][1]
+                front_trunk_intersections += results['intersections'][2]
+                back_trunk_intersections += results['intersections'][3]
+                frame_intersections += results['intersections'][4]
+                mirror_intersections += results['intersections'][5]
+                bg_intersections += results['intersections'][6]
+                wheel_unions += results['unions'][0]
+                door_unions += results['unions'][1]
+                front_trunk_unions += results['unions'][2]
+                back_trunk_unions += results['unions'][3]
+                frame_unions += results['unions'][4]
+                mirror_unions += results['unions'][5]
+                bg_unions += results['unions'][6]
+            elif cate == 'bench':
+                backrest_intersections += results['intersections'][0]
+                seat_intersections += results['intersections'][1]
+                side_intersections += results['intersections'][2]
+                bg_intersections += results['intersections'][3]
+                backrest_unions += results['unions'][0]
+                seat_unions += results['unions'][1]
+                side_unions += results['unions'][2]
+                bg_unions += results['unions'][3]
+            elif cate == 'sailboat':
+                sail_intersections += results['intersections'][0]
+                body_intersections += results['intersections'][1]
+                bg_intersections += results['intersections'][2]
+                sail_unions += results['unions'][0]
+                body_unions += results['unions'][1]
+                bg_unions += results['unions'][2]
+
+            elif cate == 'bike':
+                wheel_intersections += results['intersections'][0]
+                handlebar_intersections += results['intersections'][1]
+                saddle_intersections += results['intersections'][2]
+                frame_intersections += results['intersections'][3]
+                bg_intersections += results['intersections'][4]
+                wheel_unions += results['unions'][0]
+                handlebar_unions += results['unions'][1]
+                saddle_unions += results['unions'][2]
+                frame_unions += results['unions'][3]
+                bg_unions += results['unions'][4]
+            elif cate == 'car_uda':
+                body_intersections += results['intersections'][0]
+                wheel_intersections += results['intersections'][1]
+                mirror_intersections += results['intersections'][2]
+                bg_intersections += results['intersections'][3]
+                body_unions += results['unions'][0]
+                wheel_unions += results['unions'][1]
+                mirror_unions += results['unions'][2]
+                bg_unions += results['unions'][3]
             mious.append(results['mIoU'])
 
     print('exp name: ', cfg.args.save_dir.split('/')[-1])
@@ -286,6 +427,121 @@ def inference_image_part(
         print('final results: ')
         print('body_iou: ', results["body_iou"], '  sail_iou: ', results["sail_iou"], '  bg_iou: ', results["bg_iou"],
               '  mIoU: ', results["mIoU"])
+    elif cate == 'airliner':
+        engine_ious = engine_intersections / engine_unions
+        fuselarge_ious = fuselarge_intersections / fuselarge_unions
+        wing_ious = wing_intersections / wing_unions
+        vertical_stabilizer_ious = vertical_stabilizer_intersections / vertical_stabilizer_unions
+        wheel_ious = wheel_intersections / wheel_unions
+        horizontal_stabilizer_ious = horizontal_stabilizer_intersections / horizontal_stabilizer_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["engine_iou"] = engine_ious
+        results["fuselarge_iou"] = fuselarge_ious
+        results["wing_iou"] = wing_ious
+        results["vertical_stabilizer_iou"] = vertical_stabilizer_ious
+        results["wheel_iou"] = wheel_ious
+        results["horizontal_stabilizer_iou"] = horizontal_stabilizer_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('engine_iou: ', results["engine_iou"], '  fuselarge_iou: ', results["fuselarge_iou"], '  wing_iou: ',
+              results["wing_iou"], '  vertical_stabilizer_iou: ', results["vertical_stabilizer_iou"],
+              '  wheel_iou: ', results["wheel_iou"], '  horizontal_stabilizer_iou: ',
+              results["horizontal_stabilizer_iou"], '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
+    elif cate == 'police':
+        wheel_ious = wheel_intersections / wheel_unions
+        front_trunk_ious = front_trunk_intersections / front_trunk_unions
+        body_ious = body_intersections / body_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["wheel_iou"] = wheel_ious
+        results["front_trunk_iou"] = front_trunk_ious
+        results["body_iou"] = body_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('wheel_iou: ', results["wheel_iou"], '  front_trunk_iou: ', results["front_trunk_iou"], '  body_iou: ',
+              results["body_iou"], '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
+    elif cate == 'police1':
+        wheel_ious = wheel_intersections / wheel_unions
+        door_ious = door_intersections / door_unions
+        front_trunk_ious = front_trunk_intersections / front_trunk_unions
+        back_trunk_ious = back_trunk_intersections / back_trunk_unions
+        frame_ious = frame_intersections / frame_unions
+        mirror_ious = mirror_intersections / mirror_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["wheel_iou"] = wheel_ious
+        results["door_iou"] = door_ious
+        results["front_trunk_iou"] = front_trunk_ious
+        results["back_trunk_iou"] = back_trunk_ious
+        results["frame_iou"] = frame_ious
+        results["mirror_iou"] = mirror_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('wheel_iou: ', results["wheel_iou"], '  door_iou: ', results["door_iou"], '  front_trunk_iou: ',
+              results["front_trunk_iou"], '  back_trunk_iou: ', results["back_trunk_iou"], '  frame_iou: ',
+              results["frame_iou"], '  mirror_iou: ', results["mirror_iou"], '  bg_iou: ', results["bg_iou"],
+              '  mIoU: ', results["mIoU"])
+    elif cate == 'bench':
+        backrest_ious = backrest_intersections / backrest_unions
+        seat_ious = seat_intersections / seat_unions
+        side_ious = side_intersections / side_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["backrest_iou"] = backrest_ious
+        results["seat_iou"] = seat_ious
+        results["side_iou"] = side_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('backrest_iou: ', results["backrest_iou"], '  seat_iou: ', results["seat_iou"], '  side_iou: ',
+              results["side_iou"], '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
+    elif cate == 'sailboat':
+        sail_ious = sail_intersections / sail_unions
+        body_ious = body_intersections / body_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["sail_iou"] = sail_ious
+        results["body_iou"] = body_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('sail_iou: ', results["sail_iou"], '  body_iou: ', results["body_iou"], '  bg_iou: ', results["bg_iou"],
+              '  mIoU: ', results["mIoU"])
+    elif cate == 'bike':
+        wheel_ious = wheel_intersections / wheel_unions
+        handlebar_ious = handlebar_intersections / handlebar_unions
+        saddle_ious = saddle_intersections / saddle_unions
+        frame_ious = frame_intersections / frame_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["wheel_iou"] = wheel_ious
+        results["handlebar_iou"] = handlebar_ious
+        results["saddle_iou"] = saddle_ious
+        results["frame_iou"] = frame_ious
+        results["bg_iou"] = bg_ious
+        results["mIoU"] = np.nanmean(mious)
+        print('final results: ')
+        print('wheel_iou: ', results["wheel_iou"], '  handlebar_iou: ', results["handlebar_iou"], '  saddle_iou: ',
+              results["saddle_iou"], '  frame_iou: ', results["frame_iou"], '  bg_iou: ', results["bg_iou"],
+              '  mIoU: ', results["mIoU"])
+    elif cate == 'car_uda':
+        wheel_ious = wheel_intersections / wheel_unions
+        mirror_ious = mirror_intersections / mirror_unions
+        body_ious = body_intersections / body_unions
+        bg_ious = bg_intersections / bg_unions
+        results = {}
+        results["wheel_iou"] = wheel_ious
+        results["mirror_iou"] = mirror_ious
+        results["body_iou"] = body_ious
+        results["mIoU"] = np.nanmean(mious)
+        results["bg_iou"] = bg_ious
+        print('final results: ')
+        print('wheel_iou: ', results["wheel_iou"], '  mirror_iou: ', results["mirror_iou"], '  body_iou: ',
+              results["body_iou"], '  bg_iou: ', results["bg_iou"], '  mIoU: ', results["mIoU"])
     return None
 
 
